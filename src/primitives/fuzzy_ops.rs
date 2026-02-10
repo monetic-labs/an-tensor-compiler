@@ -25,8 +25,8 @@
 //! - Matches probabilistic interpretation (independence assumption)
 //! - Numerical stability (no discontinuities)
 
-use candle_core::{DType, Tensor};
 use crate::{Result, TensorCoreError};
+use candle_core::{DType, Tensor};
 
 /// Fuzzy AND using product t-norm: AND(a, b) = a × b
 ///
@@ -59,12 +59,12 @@ pub fn fuzzy_and(a: &Tensor, b: &Tensor) -> Result<Tensor> {
 /// - OR(0.5, 0.5) = 0.75
 /// - Gradient: ∂OR/∂a = 1 - b, ∂OR/∂b = 1 - a
 pub fn fuzzy_or(a: &Tensor, b: &Tensor) -> Result<Tensor> {
-    let sum = (a + b)
-        .map_err(|e| TensorCoreError::Tensor(format!("fuzzy_or add failed: {}", e)))?;
-    let product = a.mul(b)
+    let sum =
+        (a + b).map_err(|e| TensorCoreError::Tensor(format!("fuzzy_or add failed: {}", e)))?;
+    let product = a
+        .mul(b)
         .map_err(|e| TensorCoreError::Tensor(format!("fuzzy_or mul failed: {}", e)))?;
-    (sum - product)
-        .map_err(|e| TensorCoreError::Tensor(format!("fuzzy_or sub failed: {}", e)))
+    (sum - product).map_err(|e| TensorCoreError::Tensor(format!("fuzzy_or sub failed: {}", e)))
 }
 
 /// Fuzzy NOT: NOT(a) = 1 - a
@@ -78,8 +78,7 @@ pub fn fuzzy_not(a: &Tensor) -> Result<Tensor> {
     // Use f32 to match input dtype (F32 inputs should stay F32)
     let one = Tensor::ones_like(a)
         .map_err(|e| TensorCoreError::Tensor(format!("fuzzy_not ones_like failed: {}", e)))?;
-    (&one - a)
-        .map_err(|e| TensorCoreError::Tensor(format!("fuzzy_not failed: {}", e)))
+    (&one - a).map_err(|e| TensorCoreError::Tensor(format!("fuzzy_not failed: {}", e)))
 }
 
 /// Fuzzy IMPLIES: a → b ≡ ¬a ∨ b
@@ -108,13 +107,14 @@ pub fn fuzzy_implies(a: &Tensor, b: &Tensor) -> Result<Tensor> {
 pub fn fuzzy_and_many(terms: &[&Tensor]) -> Result<Tensor> {
     if terms.is_empty() {
         return Err(TensorCoreError::Config(
-            "fuzzy_and_many requires at least one term".into()
+            "fuzzy_and_many requires at least one term".into(),
         ));
     }
 
     let mut result = terms[0].clone();
     for term in &terms[1..] {
-        result = result.mul(term)
+        result = result
+            .mul(term)
             .map_err(|e| TensorCoreError::Tensor(format!("fuzzy_and_many failed: {}", e)))?;
     }
     Ok(result)
@@ -135,7 +135,7 @@ pub fn fuzzy_and_many(terms: &[&Tensor]) -> Result<Tensor> {
 pub fn fuzzy_or_many(terms: &[&Tensor]) -> Result<Tensor> {
     if terms.is_empty() {
         return Err(TensorCoreError::Config(
-            "fuzzy_or_many requires at least one term".into()
+            "fuzzy_or_many requires at least one term".into(),
         ));
     }
 
@@ -145,7 +145,8 @@ pub fn fuzzy_or_many(terms: &[&Tensor]) -> Result<Tensor> {
 
     for term in terms {
         let complement = fuzzy_not(term)?;
-        product_of_complements = product_of_complements.mul(&complement)
+        product_of_complements = product_of_complements
+            .mul(&complement)
             .map_err(|e| TensorCoreError::Tensor(format!("fuzzy_or_many mul failed: {}", e)))?;
     }
 
@@ -182,7 +183,8 @@ pub fn soft_threshold(x: &Tensor, threshold: &Tensor, sharpness: f32) -> Result<
 
     // Use affine transformation to scale: y = sharpness * x + 0
     // This preserves dtype and is more efficient than scalar multiplication
-    let scaled = diff.affine(sharpness as f64, 0.0)
+    let scaled = diff
+        .affine(sharpness as f64, 0.0)
         .map_err(|e| TensorCoreError::Tensor(format!("soft_threshold scale failed: {}", e)))?;
 
     super::activations::sigmoid(&scaled)
@@ -191,12 +193,17 @@ pub fn soft_threshold(x: &Tensor, threshold: &Tensor, sharpness: f32) -> Result<
 /// Soft threshold with scalar threshold value (convenience function)
 pub fn soft_threshold_scalar(x: &Tensor, threshold: f32, sharpness: f32) -> Result<Tensor> {
     // Create threshold tensor matching input dtype
-    let threshold_tensor = Tensor::new(&[threshold], x.device())
-        .map_err(|e| TensorCoreError::Tensor(format!("soft_threshold_scalar threshold tensor failed: {}", e)))?;
+    let threshold_tensor = Tensor::new(&[threshold], x.device()).map_err(|e| {
+        TensorCoreError::Tensor(format!(
+            "soft_threshold_scalar threshold tensor failed: {}",
+            e
+        ))
+    })?;
 
     // Broadcast threshold to match input shape if needed
-    let threshold_broadcast = threshold_tensor.broadcast_as(x.shape())
-        .map_err(|e| TensorCoreError::Tensor(format!("soft_threshold_scalar broadcast failed: {}", e)))?;
+    let threshold_broadcast = threshold_tensor.broadcast_as(x.shape()).map_err(|e| {
+        TensorCoreError::Tensor(format!("soft_threshold_scalar broadcast failed: {}", e))
+    })?;
 
     soft_threshold(x, &threshold_broadcast, sharpness)
 }
@@ -219,14 +226,19 @@ pub fn hard_threshold(x: &Tensor, threshold: f32) -> Result<Tensor> {
 ///
 /// This allows rules to have different importance levels.
 pub fn weighted_rule_combination(
-    activations: &Tensor,  // [batch, num_rules]
-    weights: &Tensor,      // [num_rules]
+    activations: &Tensor, // [batch, num_rules]
+    weights: &Tensor,     // [num_rules]
 ) -> Result<Tensor> {
-    let weighted = activations.matmul(&weights.unsqueeze(1)
-        .map_err(|e| TensorCoreError::Tensor(format!("unsqueeze failed: {}", e)))?)
+    let weighted = activations
+        .matmul(
+            &weights
+                .unsqueeze(1)
+                .map_err(|e| TensorCoreError::Tensor(format!("unsqueeze failed: {}", e)))?,
+        )
         .map_err(|e| TensorCoreError::Tensor(format!("matmul failed: {}", e)))?;
 
-    let squeezed = weighted.squeeze(1)
+    let squeezed = weighted
+        .squeeze(1)
         .map_err(|e| TensorCoreError::Tensor(format!("squeeze failed: {}", e)))?;
 
     super::activations::sigmoid(&squeezed)
@@ -242,28 +254,41 @@ fn asymmetric_loss_core(
     underprediction_weight: f32,
     overprediction_weight: f32,
 ) -> Result<Tensor> {
-    let errors = actual.sub(predicted)
+    let errors = actual
+        .sub(predicted)
         .map_err(|e| TensorCoreError::Tensor(format!("asymmetric_loss sub failed: {}", e)))?;
-    let squared = errors.sqr()
+    let squared = errors
+        .sqr()
         .map_err(|e| TensorCoreError::Tensor(format!("asymmetric_loss sqr failed: {}", e)))?;
 
     // Create asymmetric weights based on error sign
     let zeros = Tensor::zeros_like(&errors)
         .map_err(|e| TensorCoreError::Tensor(format!("asymmetric_loss zeros failed: {}", e)))?;
-    let positive_mask = errors.gt(&zeros)
+    let positive_mask = errors
+        .gt(&zeros)
         .map_err(|e| TensorCoreError::Tensor(format!("asymmetric_loss gt failed: {}", e)))?;
 
     let ones = Tensor::ones_like(&errors)
         .map_err(|e| TensorCoreError::Tensor(format!("asymmetric_loss ones failed: {}", e)))?;
-    let weight_under = ones.affine(underprediction_weight as f64, 0.0)
-        .map_err(|e| TensorCoreError::Tensor(format!("asymmetric_loss weight_under failed: {}", e)))?;
-    let weight_over = ones.affine(overprediction_weight as f64, 0.0)
-        .map_err(|e| TensorCoreError::Tensor(format!("asymmetric_loss weight_over failed: {}", e)))?;
+    let weight_under = ones
+        .affine(underprediction_weight as f64, 0.0)
+        .map_err(|e| {
+            TensorCoreError::Tensor(format!("asymmetric_loss weight_under failed: {}", e))
+        })?;
+    let weight_over = ones
+        .affine(overprediction_weight as f64, 0.0)
+        .map_err(|e| {
+            TensorCoreError::Tensor(format!("asymmetric_loss weight_over failed: {}", e))
+        })?;
 
-    let weights = positive_mask.where_cond(&weight_under, &weight_over)
-        .map_err(|e| TensorCoreError::Tensor(format!("asymmetric_loss where_cond failed: {}", e)))?;
+    let weights = positive_mask
+        .where_cond(&weight_under, &weight_over)
+        .map_err(|e| {
+            TensorCoreError::Tensor(format!("asymmetric_loss where_cond failed: {}", e))
+        })?;
 
-    squared.mul(&weights)
+    squared
+        .mul(&weights)
         .map_err(|e| TensorCoreError::Tensor(format!("asymmetric_loss mul failed: {}", e)))
 }
 
@@ -295,9 +320,14 @@ pub fn asymmetric_mse_loss(
     underprediction_weight: f32,
     overprediction_weight: f32,
 ) -> Result<Tensor> {
-    asymmetric_loss_core(predicted, actual, underprediction_weight, overprediction_weight)?
-        .mean_all()
-        .map_err(|e| TensorCoreError::Tensor(format!("asymmetric_mse_loss mean failed: {}", e)))
+    asymmetric_loss_core(
+        predicted,
+        actual,
+        underprediction_weight,
+        overprediction_weight,
+    )?
+    .mean_all()
+    .map_err(|e| TensorCoreError::Tensor(format!("asymmetric_mse_loss mean failed: {}", e)))
 }
 
 /// Per-element asymmetric loss (for analysis, not reduction)
@@ -310,7 +340,12 @@ pub fn asymmetric_loss_per_element(
     underprediction_weight: f32,
     overprediction_weight: f32,
 ) -> Result<Tensor> {
-    asymmetric_loss_core(predicted, actual, underprediction_weight, overprediction_weight)
+    asymmetric_loss_core(
+        predicted,
+        actual,
+        underprediction_weight,
+        overprediction_weight,
+    )
 }
 
 #[cfg(test)]
@@ -484,9 +519,13 @@ mod tests {
         // Regression test: fuzzy_not should preserve F32 dtype
         let a = tensor(&[0.6]);
         assert_eq!(a.dtype(), DType::F32);
-        
+
         let result = fuzzy_not(&a).unwrap();
-        assert_eq!(result.dtype(), DType::F32, "fuzzy_not should preserve F32 dtype");
+        assert_eq!(
+            result.dtype(),
+            DType::F32,
+            "fuzzy_not should preserve F32 dtype"
+        );
     }
 
     #[test]
@@ -495,9 +534,13 @@ mod tests {
         let a = tensor(&[0.3]);
         let b = tensor(&[0.4]);
         let c = tensor(&[0.2]);
-        
+
         let result = fuzzy_or_many(&[&a, &b, &c]).unwrap();
-        assert_eq!(result.dtype(), DType::F32, "fuzzy_or_many should preserve F32 dtype");
+        assert_eq!(
+            result.dtype(),
+            DType::F32,
+            "fuzzy_or_many should preserve F32 dtype"
+        );
     }
 
     #[test]
@@ -505,18 +548,26 @@ mod tests {
         // Regression test: soft_threshold should preserve F32 dtype
         let x = tensor(&[0.9]);
         let threshold = tensor(&[0.5]);
-        
+
         let result = soft_threshold(&x, &threshold, 10.0).unwrap();
-        assert_eq!(result.dtype(), DType::F32, "soft_threshold should preserve F32 dtype");
+        assert_eq!(
+            result.dtype(),
+            DType::F32,
+            "soft_threshold should preserve F32 dtype"
+        );
     }
 
     #[test]
     fn test_dtype_preservation_soft_threshold_scalar() {
         // Regression test: soft_threshold_scalar should preserve F32 dtype
         let x = tensor(&[0.9]);
-        
+
         let result = soft_threshold_scalar(&x, 0.5, 10.0).unwrap();
-        assert_eq!(result.dtype(), DType::F32, "soft_threshold_scalar should preserve F32 dtype");
+        assert_eq!(
+            result.dtype(),
+            DType::F32,
+            "soft_threshold_scalar should preserve F32 dtype"
+        );
     }
 
     #[test]
@@ -525,13 +576,17 @@ mod tests {
         let a = tensor(&[0.8]);
         let b = tensor(&[0.6]);
         let threshold = tensor(&[0.5]);
-        
+
         // Chain multiple operations
         let and_result = fuzzy_and(&a, &b).unwrap();
         let not_result = fuzzy_not(&and_result).unwrap();
         let thresh_result = soft_threshold(&not_result, &threshold, 5.0).unwrap();
-        
-        assert_eq!(thresh_result.dtype(), DType::F32, "Chained ops should preserve F32");
+
+        assert_eq!(
+            thresh_result.dtype(),
+            DType::F32,
+            "Chained ops should preserve F32"
+        );
     }
 
     // =========================================================================
@@ -543,11 +598,11 @@ mod tests {
         // Underprediction: actual > predicted (2× penalty)
         let predicted = tensor(&[100.0]);
         let actual = tensor(&[120.0]);
-        
+
         let loss = asymmetric_mse_loss(&predicted, &actual, 2.0, 0.5).unwrap();
         // mean_all returns a scalar (rank 0)
         let result = loss.to_scalar::<f32>().unwrap();
-        
+
         // error = 20, squared = 400, weighted = 400 × 2.0 = 800
         assert!((result - 800.0).abs() < 0.1, "Expected 800, got {}", result);
     }
@@ -557,10 +612,10 @@ mod tests {
         // Overprediction: actual < predicted (0.5× penalty)
         let predicted = tensor(&[120.0]);
         let actual = tensor(&[100.0]);
-        
+
         let loss = asymmetric_mse_loss(&predicted, &actual, 2.0, 0.5).unwrap();
         let result = loss.to_scalar::<f32>().unwrap();
-        
+
         // error = -20, squared = 400, weighted = 400 × 0.5 = 200
         assert!((result - 200.0).abs() < 0.1, "Expected 200, got {}", result);
     }
@@ -569,11 +624,11 @@ mod tests {
     fn test_asymmetric_mse_loss_mixed() {
         // Mixed: some over, some under
         let predicted = tensor(&[100.0, 100.0]);
-        let actual = tensor(&[120.0, 80.0]);  // +20 under, -20 over
-        
+        let actual = tensor(&[120.0, 80.0]); // +20 under, -20 over
+
         let loss = asymmetric_mse_loss(&predicted, &actual, 2.0, 0.5).unwrap();
         let result = loss.to_scalar::<f32>().unwrap();
-        
+
         // under: 400 × 2.0 = 800
         // over: 400 × 0.5 = 200
         // mean = (800 + 200) / 2 = 500
@@ -584,17 +639,22 @@ mod tests {
     fn test_asymmetric_loss_per_element() {
         let predicted = tensor(&[100.0, 100.0]);
         let actual = tensor(&[120.0, 80.0]);
-        
+
         let losses = asymmetric_loss_per_element(&predicted, &actual, 2.0, 0.5).unwrap();
         let result = losses.to_vec1::<f32>().unwrap();
-        
+
         // First: underprediction → 400 × 2.0 = 800
-        assert!((result[0] - 800.0).abs() < 0.1, "Expected 800, got {}", result[0]);
-        
+        assert!(
+            (result[0] - 800.0).abs() < 0.1,
+            "Expected 800, got {}",
+            result[0]
+        );
+
         // Second: overprediction → 400 × 0.5 = 200
-        assert!((result[1] - 200.0).abs() < 0.1, "Expected 200, got {}", result[1]);
+        assert!(
+            (result[1] - 200.0).abs() < 0.1,
+            "Expected 200, got {}",
+            result[1]
+        );
     }
 }
-
-
-

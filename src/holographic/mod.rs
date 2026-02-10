@@ -47,24 +47,25 @@
 //!
 //! Tony Plate, "Holographic Reduced Representations" (1995)
 
-pub mod ops;
-pub mod types;
 pub mod manifest;
+pub mod ops;
 pub mod storage;
+pub mod types;
 
 // Core operations
-pub use ops::{bind, unbind, project, superimpose, position_encoding, role_encoding, cosine_similarity};
+pub use ops::{
+    bind, cosine_similarity, position_encoding, project, role_encoding, superimpose, unbind,
+};
 
 // Type hierarchy
 pub use types::{
-    ComponentTensor, ModuleTensor, BoundedContextTensor, OrganismTensor,
-    ComponentKind, ComponentId, ContextRole,
-    ProjectionResult, CoherenceResult, BoundaryViolation,
-    BoundaryRules, FederationBinding, HistoryTensor,
+    BoundaryRules, BoundaryViolation, BoundedContextTensor, CoherenceResult, ComponentId,
+    ComponentKind, ComponentTensor, ContextRole, FederationBinding, HistoryTensor, ModuleTensor,
+    OrganismTensor, ProjectionResult,
 };
 
 // Manifest for project structure
-pub use manifest::{ContextManifest, OrganismInfo, ContextInfo, EncodingInfo};
+pub use manifest::{ContextInfo, ContextManifest, EncodingInfo, OrganismInfo};
 
 // Storage and persistence
-pub use storage::{TensorStore, ComponentCache, CacheEntry, CacheStats, IncrementalState};
+pub use storage::{CacheEntry, CacheStats, ComponentCache, IncrementalState, TensorStore};

@@ -35,8 +35,8 @@
 //! });
 //! ```
 
-use candle_core::{Device, Tensor};
 use crate::{Result, TensorCoreError};
+use candle_core::{Device, Tensor};
 use parking_lot::Mutex;
 use std::cell::RefCell;
 use std::sync::OnceLock;
@@ -47,7 +47,7 @@ use tracing::info;
 // ============================================================================
 
 /// Global mutex for serializing GPU command buffer access when needed.
-/// 
+///
 /// Use `with_gpu_sync()` to safely execute GPU operations from multiple threads.
 static GPU_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
 
@@ -56,7 +56,7 @@ fn gpu_mutex() -> &'static Mutex<()> {
 }
 
 /// Execute a closure with synchronized GPU access.
-/// 
+///
 /// This serializes GPU command buffer encoding to avoid Metal thread safety issues.
 /// Use this when you need GPU acceleration from multiple threads but can tolerate
 /// serialized execution.
@@ -85,7 +85,7 @@ pub fn with_gpu_sync<T, F: FnOnce() -> T>(f: F) -> T {
 // ============================================================================
 
 /// Check if GPU is disabled via environment variable.
-/// 
+///
 /// Set `AN_TENSOR_NO_GPU=1` to force CPU-only mode. This is recommended for
 /// parallel workloads where multiple threads access shared tensor data.
 pub fn gpu_disabled() -> bool {
@@ -121,7 +121,7 @@ pub fn best_device() -> Device {
         info!("💻 Using CPU device (AN_TENSOR_NO_GPU set)");
         return Device::Cpu;
     }
-    
+
     // Try Metal first (for M3/M3 Ultra)
     #[cfg(feature = "metal")]
     {
@@ -146,7 +146,7 @@ pub fn best_device() -> Device {
 }
 
 /// Force CPU device, ignoring GPU availability.
-/// 
+///
 /// Use this when you need guaranteed thread-safe tensor operations,
 /// such as in parallel simulations or when sharing manifolds across threads.
 ///
@@ -177,7 +177,7 @@ pub fn cpu_device() -> Device {
 
 thread_local! {
     /// Thread-local device instance.
-    /// 
+    ///
     /// Each thread gets its own device to avoid Metal command buffer conflicts.
     /// For CPU, this is always safe. For GPU, each thread gets its own Metal device
     /// with separate command buffers (if available).
@@ -185,7 +185,7 @@ thread_local! {
 }
 
 /// Get a thread-local device for the current thread.
-/// 
+///
 /// This is the recommended approach for parallel workloads where each thread
 /// needs its own tensor operations. Each thread gets its own device instance,
 /// avoiding Metal command buffer conflicts.
@@ -222,7 +222,7 @@ pub fn thread_local_device() -> Device {
                     // But we try Metal in case the user wants it.
                     if let Ok(device) = Device::new_metal(0) {
                         // Log only on first thread to avoid spam
-                        static LOGGED: std::sync::atomic::AtomicBool = 
+                        static LOGGED: std::sync::atomic::AtomicBool =
                             std::sync::atomic::AtomicBool::new(false);
                         if !LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed) {
                             info!("🍎 Thread-local Metal device (Apple Silicon)");
@@ -288,16 +288,23 @@ pub fn gpu_available() -> bool {
 ///
 /// Returns a scalar in [-1, 1] representing the angle between vectors.
 pub fn cosine_similarity(a: &Tensor, b: &Tensor) -> Result<f32> {
-    let dot = a.mul(b)?
+    let dot = a
+        .mul(b)?
         .sum_all()?
         .to_scalar::<f32>()
         .map_err(|e| TensorCoreError::Tensor(format!("Dot product failed: {}", e)))?;
 
-    let norm_a = a.sqr()?.sum_all()?.sqrt()?
+    let norm_a = a
+        .sqr()?
+        .sum_all()?
+        .sqrt()?
         .to_scalar::<f32>()
         .map_err(|e| TensorCoreError::Tensor(format!("Norm a failed: {}", e)))?;
 
-    let norm_b = b.sqr()?.sum_all()?.sqrt()?
+    let norm_b = b
+        .sqr()?
+        .sum_all()?
+        .sqrt()?
         .to_scalar::<f32>()
         .map_err(|e| TensorCoreError::Tensor(format!("Norm b failed: {}", e)))?;
 
@@ -313,40 +320,47 @@ pub fn cosine_similarity(a: &Tensor, b: &Tensor) -> Result<f32> {
 /// BCE = -[y * log(p) + (1-y) * log(1-p)]
 pub fn binary_cross_entropy(pred: &Tensor, target: &Tensor) -> Result<Tensor> {
     let eps = 1e-7f32;
-    let pred_clamped = pred.clamp(eps, 1.0 - eps)
+    let pred_clamped = pred
+        .clamp(eps, 1.0 - eps)
         .map_err(|e| TensorCoreError::Tensor(format!("Clamp failed: {}", e)))?;
-    let log_p = pred_clamped.log()
+    let log_p = pred_clamped
+        .log()
         .map_err(|e| TensorCoreError::Tensor(format!("Log failed: {}", e)))?;
-    
+
     // Use ones_like to preserve dtype (avoid F64 promotion from 1.0 literal)
     let ones = Tensor::ones_like(&pred_clamped)
         .map_err(|e| TensorCoreError::Tensor(format!("ones_like failed: {}", e)))?;
     let one_minus_pred = (&ones - &pred_clamped)
         .map_err(|e| TensorCoreError::Tensor(format!("1-pred failed: {}", e)))?;
-    let log_1_p = one_minus_pred.log()
+    let log_1_p = one_minus_pred
+        .log()
         .map_err(|e| TensorCoreError::Tensor(format!("Log 1-p failed: {}", e)))?;
 
-    let term1 = target.mul(&log_p)
+    let term1 = target
+        .mul(&log_p)
         .map_err(|e| TensorCoreError::Tensor(format!("BCE term1 failed: {}", e)))?;
-    
+
     let ones_target = Tensor::ones_like(target)
         .map_err(|e| TensorCoreError::Tensor(format!("ones_like target failed: {}", e)))?;
     let one_minus_target = (&ones_target - target)
         .map_err(|e| TensorCoreError::Tensor(format!("1-target failed: {}", e)))?;
-    let term2 = one_minus_target.mul(&log_1_p)
+    let term2 = one_minus_target
+        .mul(&log_1_p)
         .map_err(|e| TensorCoreError::Tensor(format!("BCE term2 failed: {}", e)))?;
 
     let loss = (term1 + term2)?;
-    let neg_loss = loss.neg()
+    let neg_loss = loss
+        .neg()
         .map_err(|e| TensorCoreError::Tensor(format!("Neg failed: {}", e)))?;
-    neg_loss.mean_all()
+    neg_loss
+        .mean_all()
         .map_err(|e| TensorCoreError::Tensor(format!("BCE mean failed: {}", e)))
 }
 
 /// Mean squared error loss
 pub fn mse_loss(pred: &Tensor, target: &Tensor) -> Result<Tensor> {
-    let diff = (pred - target)
-        .map_err(|e| TensorCoreError::Tensor(format!("MSE diff failed: {}", e)))?;
+    let diff =
+        (pred - target).map_err(|e| TensorCoreError::Tensor(format!("MSE diff failed: {}", e)))?;
     diff.sqr()?
         .mean_all()
         .map_err(|e| TensorCoreError::Tensor(format!("MSE failed: {}", e)))
@@ -361,7 +375,10 @@ mod tests {
     fn test_best_device() {
         let device = best_device();
         // Should return a valid device
-        assert!(matches!(device, Device::Cpu | Device::Metal(_) | Device::Cuda(_)));
+        assert!(matches!(
+            device,
+            Device::Cpu | Device::Metal(_) | Device::Cuda(_)
+        ));
     }
 
     #[test]
@@ -374,11 +391,17 @@ mod tests {
     fn test_thread_local_device() {
         // Thread-local device should work on main thread
         let device = thread_local_device();
-        assert!(matches!(device, Device::Cpu | Device::Metal(_) | Device::Cuda(_)));
-        
+        assert!(matches!(
+            device,
+            Device::Cpu | Device::Metal(_) | Device::Cuda(_)
+        ));
+
         // Same thread should get same device type
         let device2 = thread_local_device();
-        assert!(matches!(device2, Device::Cpu | Device::Metal(_) | Device::Cuda(_)));
+        assert!(matches!(
+            device2,
+            Device::Cpu | Device::Metal(_) | Device::Cuda(_)
+        ));
     }
 
     #[test]
@@ -406,20 +429,18 @@ mod tests {
     }
 
     /// Test parallel tensor access with CPU device (thread-safe)
-    /// 
+    ///
     /// This simulates the pattern from the bug report where multiple threads
     /// read from shared tensor data.
     #[test]
     fn test_parallel_tensor_access_cpu() {
         use std::thread;
-        
+
         // Create shared tensor data on CPU (thread-safe)
         let device = cpu_device();
         let tensor_data: Vec<f32> = (0..1000).map(|i| i as f32).collect();
-        let tensor = Arc::new(
-            Tensor::from_vec(tensor_data, (10, 100), &device).unwrap()
-        );
-        
+        let tensor = Arc::new(Tensor::from_vec(tensor_data, (10, 100), &device).unwrap());
+
         // Spawn parallel threads accessing the shared tensor
         let handles: Vec<_> = (0..16)
             .map(|i| {
@@ -427,17 +448,15 @@ mod tests {
                 thread::spawn(move || {
                     // Each thread reads from shared tensor
                     let row = t.narrow(0, i % 10, 1).unwrap();
-                    
+
                     row.sum_all().unwrap().to_scalar::<f32>().unwrap()
                 })
             })
             .collect();
-        
+
         // Collect results
-        let results: Vec<f32> = handles.into_iter()
-            .map(|h| h.join().unwrap())
-            .collect();
-        
+        let results: Vec<f32> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+
         assert_eq!(results.len(), 16);
         // All results should be valid numbers
         for r in &results {
@@ -449,30 +468,29 @@ mod tests {
     #[test]
     fn test_parallel_thread_local_devices() {
         use std::thread;
-        
+
         let handles: Vec<_> = (0..8)
             .map(|i| {
                 thread::spawn(move || {
                     let device = thread_local_device();
                     // Each thread creates its own tensor on its device
-                    let tensor = Tensor::from_vec(
-                        vec![i as f32; 100],
-                        100,
-                        &device
-                    ).unwrap();
+                    let tensor = Tensor::from_vec(vec![i as f32; 100], 100, &device).unwrap();
                     tensor.sum_all().unwrap().to_scalar::<f32>().unwrap()
                 })
             })
             .collect();
-        
-        let results: Vec<f32> = handles.into_iter()
-            .map(|h| h.join().unwrap())
-            .collect();
-        
+
+        let results: Vec<f32> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+
         assert_eq!(results.len(), 8);
         for (i, r) in results.iter().enumerate() {
             let expected = (i as f32) * 100.0;
-            assert!((r - expected).abs() < 0.001, "Expected {} but got {}", expected, r);
+            assert!(
+                (r - expected).abs() < 0.001,
+                "Expected {} but got {}",
+                expected,
+                r
+            );
         }
     }
 
@@ -480,28 +498,22 @@ mod tests {
     #[test]
     fn test_parallel_gpu_sync() {
         use std::thread;
-        
+
         let handles: Vec<_> = (0..4)
             .map(|i| {
                 thread::spawn(move || {
                     with_gpu_sync(|| {
                         // Inside gpu_sync, safe to use any device
                         let device = cpu_device(); // Using CPU for test reliability
-                        let tensor = Tensor::from_vec(
-                            vec![i as f32; 10],
-                            10,
-                            &device
-                        ).unwrap();
+                        let tensor = Tensor::from_vec(vec![i as f32; 10], 10, &device).unwrap();
                         tensor.sum_all().unwrap().to_scalar::<f32>().unwrap()
                     })
                 })
             })
             .collect();
-        
-        let results: Vec<f32> = handles.into_iter()
-            .map(|h| h.join().unwrap())
-            .collect();
-        
+
+        let results: Vec<f32> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+
         assert_eq!(results.len(), 4);
         for (i, r) in results.iter().enumerate() {
             let expected = (i as f32) * 10.0;
@@ -556,6 +568,3 @@ mod tests {
         assert!(loss_val < 0.2);
     }
 }
-
-
-

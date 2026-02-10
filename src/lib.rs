@@ -46,16 +46,16 @@
 //! - `metal`: Apple Metal GPU acceleration (M1/M2/M3/M4)
 //! - `cuda`: NVIDIA CUDA GPU acceleration
 
-pub mod primitives;
-pub mod namespace;
 pub mod compiler;
-pub mod federation;
-pub mod training;
-pub mod holographic;
 pub mod crdt;
+pub mod federation;
+pub mod holographic;
+pub mod namespace;
+pub mod primitives;
+pub mod training;
 
 // Re-export candle types for convenience
-pub use candle_core::{Device, DType, Tensor, Var};
+pub use candle_core::{DType, Device, Tensor, Var};
 
 /// Error types for tensor compiler operations
 #[derive(Debug, thiserror::Error)]
@@ -102,53 +102,63 @@ pub type Result<T> = std::result::Result<T, TensorCoreError>;
 
 /// Prelude module for convenient imports
 pub mod prelude {
-    pub use crate::{Device, DType, Tensor, Var};
+    pub use crate::{DType, Device, Tensor, Var};
     pub use crate::{Result, TensorCoreError};
 
     // Primitives
     pub use crate::primitives::{
         // Device selection
-        best_device, cpu_device, thread_local_device,
-        metal_available, cuda_available, gpu_available, gpu_disabled,
-        with_gpu_sync,
-        // Fuzzy logic operators
-        fuzzy_and, fuzzy_or, fuzzy_not, fuzzy_implies,
-        fuzzy_and_many, fuzzy_or_many,
-        soft_threshold, soft_threshold_scalar, hard_threshold,
-        weighted_rule_combination,
+        best_device,
+        binary_cross_entropy,
         // Tensor operations
-        cosine_similarity, sigmoid, softmax, relu,
-        binary_cross_entropy, mse_loss,
+        cosine_similarity,
+        cpu_device,
+        cuda_available,
+        // Fuzzy logic operators
+        fuzzy_and,
+        fuzzy_and_many,
+        fuzzy_implies,
+        fuzzy_not,
+        fuzzy_or,
+        fuzzy_or_many,
+        gelu,
+        gpu_available,
+        gpu_disabled,
+        hard_threshold,
         // Additional activations
-        leaky_relu, tanh, gelu,
+        leaky_relu,
+        metal_available,
+        mse_loss,
+        relu,
+        sigmoid,
+        soft_threshold,
+        soft_threshold_scalar,
+        softmax,
+        tanh,
+        thread_local_device,
+        weighted_rule_combination,
+        with_gpu_sync,
     };
 
     // Namespace
     pub use crate::namespace::{
-        NamespaceId, NamespaceRegistry, NamespacedTensor,
-        TRADING, PIPELINE, CHAT,
+        NamespaceId, NamespaceRegistry, NamespacedTensor, CHAT, PIPELINE, TRADING,
     };
 
     // Compiler
-    pub use crate::compiler::{
-        RuleSpec, CompiledRule,
-    };
+    pub use crate::compiler::{CompiledRule, RuleSpec};
 
     // Federation
-    pub use crate::federation::{
-        FederationConfig, MergeStrategy,
-    };
+    pub use crate::federation::{FederationConfig, MergeStrategy};
 
     // Training utilities
     pub use crate::training::{
-        TrainingMetrics, TrainingOutcome,
-        safe_optimizer_step, compute_grad_norm, check_gradients_health,
+        check_gradients_health, compute_grad_norm, safe_optimizer_step, TrainingMetrics,
+        TrainingOutcome,
     };
 
     // Holographic
-    pub use crate::holographic::{
-        bind, unbind, project, superimpose,
-    };
+    pub use crate::holographic::{bind, project, superimpose, unbind};
 }
 
 #[cfg(test)]
@@ -158,6 +168,10 @@ mod tests {
         use crate::prelude::*;
 
         let device = best_device();
-        assert!(matches!(device, Device::Cpu) || matches!(device, Device::Metal(_)) || matches!(device, Device::Cuda(_)));
+        assert!(
+            matches!(device, Device::Cpu)
+                || matches!(device, Device::Metal(_))
+                || matches!(device, Device::Cuda(_))
+        );
     }
 }

@@ -7,39 +7,51 @@
 //! cargo run --example training_loop
 //! ```
 
+use an_tensor_compiler::compiler::{Activation, PredicateSpec};
 use an_tensor_compiler::prelude::*;
-use an_tensor_compiler::compiler::{PredicateSpec, Activation};
-use an_tensor_compiler::training::{safe_optimizer_step, compute_grad_norm, check_gradients_health};
-use candle_nn::optim::{AdamW, ParamsAdamW, Optimizer};
+use an_tensor_compiler::training::{
+    check_gradients_health, compute_grad_norm, safe_optimizer_step,
+};
+use candle_nn::optim::{AdamW, Optimizer, ParamsAdamW};
 use std::collections::HashMap;
 
 fn main() -> Result<()> {
     let device = best_device();
 
     // 1. Define a learnable rule
-    let mut spec = RuleSpec::parse("classifier", r#"
+    let mut spec = RuleSpec::parse(
+        "classifier",
+        r#"
         positive(X) :- score(X).
-    "#)?;
+    "#,
+    )?;
 
-    spec.add_predicate("score", PredicateSpec::LearnedProjection {
-        inputs: vec!["features".into()],
-        input_dim: 4,
-        hidden_dim: 8,
-        activation: Activation::ReLU,
-        attention_heads: None,
-        attention_dropout: None,
-        layer_norm: None,
-        dropout: None,
-        residual: None,
-        conditioning_dim: None,
-        conditioning_type: None,
-        film_identity_init: None,
-    });
+    spec.add_predicate(
+        "score",
+        PredicateSpec::LearnedProjection {
+            inputs: vec!["features".into()],
+            input_dim: 4,
+            hidden_dim: 8,
+            activation: Activation::ReLU,
+            attention_heads: None,
+            attention_dropout: None,
+            layer_norm: None,
+            dropout: None,
+            residual: None,
+            conditioning_dim: None,
+            conditioning_type: None,
+            film_identity_init: None,
+        },
+    );
 
     // 2. Compile
     let compiled = CompiledRule::compile_on_device(spec, &device)?;
     let vars = compiled.trainable_vars();
-    println!("Training with {} parameters ({} vars)", compiled.param_count, vars.len());
+    println!(
+        "Training with {} parameters ({} vars)",
+        compiled.param_count,
+        vars.len()
+    );
 
     // 3. Create optimizer
     let params = ParamsAdamW {
@@ -68,7 +80,8 @@ fn main() -> Result<()> {
         let loss = binary_cross_entropy(&pred, &target)?;
 
         // Backward pass
-        let grads = loss.backward()
+        let grads = loss
+            .backward()
             .map_err(|e| TensorCoreError::Tensor(format!("backward: {}", e)))?;
 
         // Check gradient health
@@ -81,7 +94,7 @@ fn main() -> Result<()> {
 
         // Safe optimizer step with gradient clipping
         match safe_optimizer_step(&mut optimizer, &grads, &vars, 1.0, 0.01) {
-            Ok(()) => {},
+            Ok(()) => {}
             Err(e) => {
                 println!("  epoch {}: step failed: {}", epoch, e);
                 continue;
@@ -90,7 +103,10 @@ fn main() -> Result<()> {
 
         if epoch % 10 == 0 {
             let loss_val = loss.to_scalar::<f32>()?;
-            println!("  epoch {:3}: loss={:.4}, grad_norm={:.4}", epoch, loss_val, grad_norm);
+            println!(
+                "  epoch {:3}: loss={:.4}, grad_norm={:.4}",
+                epoch, loss_val, grad_norm
+            );
         }
     }
 

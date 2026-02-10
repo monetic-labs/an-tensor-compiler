@@ -27,13 +27,13 @@ use crate::{Result, TensorCoreError};
 pub struct ParticipantUpdate {
     /// Source namespace
     pub namespace: NamespaceId,
-    
+
     /// Parameter tensor
     pub params: Tensor,
-    
+
     /// Number of training examples this update is based on
     pub example_count: usize,
-    
+
     /// Accuracy/loss on validation data (optional, for weighting)
     pub accuracy: Option<f32>,
 }
@@ -65,13 +65,13 @@ impl ParticipantUpdate {
 pub struct MergeResult {
     /// Merged parameter tensor
     pub merged_params: Tensor,
-    
+
     /// Per-namespace contribution weights (normalized)
     pub contribution_weights: HashMap<NamespaceId, f32>,
-    
+
     /// Total examples used
     pub total_examples: usize,
-    
+
     /// Number of participants
     pub participant_count: usize,
 }
@@ -121,7 +121,7 @@ pub fn weighted_average(updates: &[ParticipantUpdate]) -> Result<MergeResult> {
     // Compute weighted sum
     let device = updates[0].params.device();
     let shape = updates[0].params.dims();
-    
+
     let mut merged = Tensor::zeros(shape, DType::F32, device)
         .map_err(|e| TensorCoreError::Tensor(format!("zeros failed: {}", e)))?;
 
@@ -156,7 +156,7 @@ pub fn weighted_average(updates: &[ParticipantUpdate]) -> Result<MergeResult> {
 /// This function implements step 3 - the server-side averaging.
 ///
 /// # Difference from weighted_average
-/// 
+///
 /// FedAvg expects **deltas** (change from previous global model),
 /// while weighted_average works on full parameters.
 ///
@@ -228,7 +228,7 @@ pub fn median(updates: &[ParticipantUpdate]) -> Result<MergeResult> {
 
     // For coordinate-wise median, we need to find the median value at each position
     // We'll do this by extracting values, sorting, and taking the middle
-    
+
     // Flatten all params
     let flat_params: Vec<Vec<f32>> = updates
         .iter()
@@ -248,7 +248,7 @@ pub fn median(updates: &[ParticipantUpdate]) -> Result<MergeResult> {
     for i in 0..n_params {
         let mut values: Vec<f32> = flat_params.iter().map(|p| p[i]).collect();
         values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        
+
         let median_val = if n % 2 == 1 {
             values[n / 2]
         } else {
@@ -260,17 +260,15 @@ pub fn median(updates: &[ParticipantUpdate]) -> Result<MergeResult> {
     let device = updates[0].params.device();
     let merged_flat = Tensor::from_vec(median_values, n_params, device)
         .map_err(|e| TensorCoreError::Tensor(format!("from_vec failed: {}", e)))?;
-    
+
     let merged_params = merged_flat
         .reshape(shape)
         .map_err(|e| TensorCoreError::Tensor(format!("reshape failed: {}", e)))?;
 
     // Equal contribution for median
     let weight = 1.0 / updates.len() as f32;
-    let contribution_weights: HashMap<NamespaceId, f32> = updates
-        .iter()
-        .map(|u| (u.namespace, weight))
-        .collect();
+    let contribution_weights: HashMap<NamespaceId, f32> =
+        updates.iter().map(|u| (u.namespace, weight)).collect();
 
     let total_examples: usize = updates.iter().map(|u| u.example_count).sum();
 
@@ -313,7 +311,7 @@ pub fn trimmed_mean(updates: &[ParticipantUpdate], trim_fraction: f32) -> Result
 
     let n = updates.len();
     let trim_count = (n as f32 * trim_fraction).floor() as usize;
-    
+
     // If we'd trim everything, just do regular average
     if n <= 2 * trim_count {
         return weighted_average(updates);
@@ -341,7 +339,7 @@ pub fn trimmed_mean(updates: &[ParticipantUpdate], trim_fraction: f32) -> Result
     for i in 0..n_params {
         let mut values: Vec<f32> = flat_params.iter().map(|p| p[i]).collect();
         values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        
+
         // Take middle portion and average
         let trimmed: Vec<f32> = values[trim_count..(n - trim_count)].to_vec();
         let mean_val: f32 = trimmed.iter().sum::<f32>() / trimmed.len() as f32;
@@ -351,17 +349,15 @@ pub fn trimmed_mean(updates: &[ParticipantUpdate], trim_fraction: f32) -> Result
     let device = updates[0].params.device();
     let merged_flat = Tensor::from_vec(trimmed_mean_values, n_params, device)
         .map_err(|e| TensorCoreError::Tensor(format!("from_vec failed: {}", e)))?;
-    
+
     let merged_params = merged_flat
         .reshape(shape)
         .map_err(|e| TensorCoreError::Tensor(format!("reshape failed: {}", e)))?;
 
     // Weights are less meaningful for trimmed mean
     let weight = 1.0 / keep_count as f32;
-    let contribution_weights: HashMap<NamespaceId, f32> = updates
-        .iter()
-        .map(|u| (u.namespace, weight))
-        .collect();
+    let contribution_weights: HashMap<NamespaceId, f32> =
+        updates.iter().map(|u| (u.namespace, weight)).collect();
 
     let total_examples: usize = updates.iter().map(|u| u.example_count).sum();
 
@@ -445,7 +441,7 @@ pub fn accuracy_weighted(updates: &[ParticipantUpdate]) -> Result<MergeResult> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::namespace::{TRADING, PIPELINE, CHAT};
+    use crate::namespace::{CHAT, PIPELINE, TRADING};
     use candle_core::Device;
 
     fn device() -> Device {
@@ -531,7 +527,7 @@ mod tests {
     fn test_trimmed_mean() {
         // 5 participants, trim 20% = trim 1 from each end
         let updates = vec![
-            ParticipantUpdate::new(0, tensor(&[1.0]), 100),  // min - trimmed
+            ParticipantUpdate::new(0, tensor(&[1.0]), 100), // min - trimmed
             ParticipantUpdate::new(1, tensor(&[2.0]), 100),
             ParticipantUpdate::new(2, tensor(&[3.0]), 100),
             ParticipantUpdate::new(3, tensor(&[4.0]), 100),
@@ -548,10 +544,8 @@ mod tests {
     #[test]
     fn test_accuracy_weighted() {
         let updates = vec![
-            ParticipantUpdate::new(TRADING, tensor(&[1.0, 2.0]), 100)
-                .with_accuracy(0.9), // High accuracy
-            ParticipantUpdate::new(PIPELINE, tensor(&[5.0, 6.0]), 100)
-                .with_accuracy(0.1), // Low accuracy
+            ParticipantUpdate::new(TRADING, tensor(&[1.0, 2.0]), 100).with_accuracy(0.9), // High accuracy
+            ParticipantUpdate::new(PIPELINE, tensor(&[5.0, 6.0]), 100).with_accuracy(0.1), // Low accuracy
         ];
 
         let result = accuracy_weighted(&updates).unwrap();
@@ -565,9 +559,11 @@ mod tests {
 
     #[test]
     fn test_weighted_average_single() {
-        let updates = vec![
-            ParticipantUpdate::new(TRADING, tensor(&[1.0, 2.0, 3.0]), 100),
-        ];
+        let updates = vec![ParticipantUpdate::new(
+            TRADING,
+            tensor(&[1.0, 2.0, 3.0]),
+            100,
+        )];
 
         let result = weighted_average(&updates).unwrap();
         let vals = result.merged_params.to_vec1::<f32>().unwrap();
@@ -587,9 +583,9 @@ mod tests {
     #[test]
     fn test_three_namespace_federation() {
         let updates = vec![
-            ParticipantUpdate::new(TRADING, tensor(&[1.0]), 500),   // 50%
-            ParticipantUpdate::new(PIPELINE, tensor(&[2.0]), 300),  // 30%
-            ParticipantUpdate::new(CHAT, tensor(&[3.0]), 200),      // 20%
+            ParticipantUpdate::new(TRADING, tensor(&[1.0]), 500), // 50%
+            ParticipantUpdate::new(PIPELINE, tensor(&[2.0]), 300), // 30%
+            ParticipantUpdate::new(CHAT, tensor(&[3.0]), 200),    // 20%
         ];
 
         let result = weighted_average(&updates).unwrap();
@@ -601,4 +597,3 @@ mod tests {
         assert_eq!(result.total_examples, 1000);
     }
 }
-

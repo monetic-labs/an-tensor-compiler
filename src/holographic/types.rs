@@ -4,10 +4,10 @@
 //! and organisms in the hierarchical code representation.
 
 use candle_core::Tensor;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use chrono::{DateTime, Utc};
 
 // ============================================================================
 // Component Level (Atomic)
@@ -43,7 +43,7 @@ impl ComponentKind {
     /// Weight for composition (more important = higher weight)
     pub fn importance_weight(&self) -> f32 {
         match self {
-            Self::Trait => 1.0,      // Traits define interfaces
+            Self::Trait => 1.0,     // Traits define interfaces
             Self::Struct => 0.9,    // Core data structures
             Self::Enum => 0.9,      // Core types
             Self::Function => 0.7,  // Behavior
@@ -77,7 +77,7 @@ impl ComponentId {
             kind,
         }
     }
-    
+
     /// Full qualified path
     pub fn full_path(&self) -> String {
         format!("{}::{}", self.module, self.name)
@@ -95,29 +95,29 @@ impl std::fmt::Display for ComponentId {
 pub struct ComponentTensor {
     /// Unique identifier
     pub id: ComponentId,
-    
+
     /// Source file location
     pub file: PathBuf,
     /// Starting line number in source file
     pub line_start: usize,
     /// Ending line number in source file
     pub line_end: usize,
-    
-    /// Semantic embedding (what it does) [dim]
+
+    /// Semantic embedding (what it does), shape: `[dim]`
     pub semantic: Tensor,
-    
-    /// Structural embedding (AST shape) [dim]
+
+    /// Structural embedding (AST shape), shape: `[dim]`
     pub structural: Tensor,
-    
-    /// Signature embedding (types, parameters) [dim]
+
+    /// Signature embedding (types, parameters), shape: `[dim]`
     pub signature: Tensor,
-    
-    /// Documentation embedding [dim]
+
+    /// Documentation embedding, shape: `[dim]`
     pub documentation: Option<Tensor>,
-    
-    /// Combined holographic representation [dim]
+
+    /// Combined holographic representation, shape: `[dim]`
     pub hologram: Tensor,
-    
+
     /// Visibility
     pub is_public: bool,
 }
@@ -131,19 +131,19 @@ pub struct ComponentTensor {
 pub struct ModuleTensor {
     /// Module path (e.g., "synapse::data_sync")
     pub path: String,
-    
+
     /// File path
     pub file: PathBuf,
-    
+
     /// Components in this module
     pub components: Vec<ComponentTensor>,
-    
-    /// Composed hologram [dim]
+
+    /// Composed hologram, shape: `[dim]`
     pub hologram: Tensor,
-    
+
     /// Public exports
     pub exports: Vec<ComponentId>,
-    
+
     /// Imports from other modules
     pub imports: Vec<String>,
 }
@@ -153,7 +153,7 @@ impl ModuleTensor {
     pub fn get_component(&self, name: &str) -> Option<&ComponentTensor> {
         self.components.iter().find(|c| c.id.name == name)
     }
-    
+
     /// Get public components only
     pub fn public_components(&self) -> impl Iterator<Item = &ComponentTensor> {
         self.components.iter().filter(|c| c.is_public)
@@ -188,7 +188,7 @@ impl ContextRole {
             Self::Utility => 0.4,
         }
     }
-    
+
     /// Parse from a role string
     pub fn parse(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
@@ -206,28 +206,28 @@ impl ContextRole {
 pub struct BoundedContextTensor {
     /// Context name
     pub name: String,
-    
+
     /// Root path
     pub path: PathBuf,
-    
+
     /// Description
     pub description: String,
-    
+
     /// Role in organism
     pub role: ContextRole,
-    
+
     /// Modules in this context
     pub modules: Vec<ModuleTensor>,
-    
-    /// Composed hologram [dim]
+
+    /// Composed hologram, shape: `[dim]`
     pub hologram: Tensor,
-    
+
     /// Public API exports
     pub api: Vec<ComponentId>,
-    
+
     /// Detected patterns (e.g., "async-trait", "error-handling")
     pub patterns: Vec<String>,
-    
+
     /// Internal module dependencies
     pub dependencies: Vec<(String, String)>,
 }
@@ -237,10 +237,11 @@ impl BoundedContextTensor {
     pub fn get_module(&self, path: &str) -> Option<&ModuleTensor> {
         self.modules.iter().find(|m| m.path == path)
     }
-    
+
     /// Find components matching a pattern
     pub fn find_components(&self, pattern: &str) -> Vec<&ComponentTensor> {
-        self.modules.iter()
+        self.modules
+            .iter()
             .flat_map(|m| m.components.iter())
             .filter(|c| c.id.name.contains(pattern) || c.id.module.contains(pattern))
             .collect()
@@ -262,17 +263,15 @@ pub struct BoundaryRules {
 impl BoundaryRules {
     /// Check if a dependency is allowed
     pub fn can_depend(&self, from: &str, to: &str) -> bool {
-        self.allowed.get(from)
+        self.allowed
+            .get(from)
             .map(|deps| deps.contains(&to.to_string()))
             .unwrap_or(false)
     }
-    
+
     /// Add a dependency rule
     pub fn allow(&mut self, from: impl Into<String>, to: impl Into<String>) {
-        self.allowed
-            .entry(from.into())
-            .or_default()
-            .push(to.into());
+        self.allowed.entry(from.into()).or_default().push(to.into());
     }
 }
 
@@ -317,15 +316,17 @@ impl HistoryTensor {
     /// Find commits similar to a query
     pub fn find_similar(&self, query: &Tensor, top_k: usize) -> Vec<(&CommitTensor, f32)> {
         use super::ops::cosine_similarity;
-        
-        let mut scored: Vec<_> = self.commits.iter()
+
+        let mut scored: Vec<_> = self
+            .commits
+            .iter()
             .filter_map(|c| {
                 cosine_similarity(query, &c.diff_tensor)
                     .ok()
                     .map(|score| (c, score))
             })
             .collect();
-        
+
         scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         scored.truncate(top_k);
         scored
@@ -337,28 +338,28 @@ impl HistoryTensor {
 pub struct OrganismTensor {
     /// Project identifier
     pub project_id: String,
-    
+
     /// Human-readable name
     pub name: String,
-    
+
     /// Description
     pub description: String,
-    
+
     /// Bounded contexts
     pub contexts: Vec<BoundedContextTensor>,
-    
-    /// Composed hologram [dim]
+
+    /// Composed hologram, shape: `[dim]`
     pub hologram: Tensor,
-    
+
     /// Boundary rules
     pub boundaries: BoundaryRules,
-    
+
     /// Federation (dependencies on other organisms)
     pub federation: Vec<FederationBinding>,
-    
+
     /// History tensor
     pub history: Option<HistoryTensor>,
-    
+
     /// When this organism tensor was last updated
     pub updated_at: DateTime<Utc>,
     /// Git commit hash this tensor was built from
@@ -372,16 +373,18 @@ impl OrganismTensor {
     pub fn get_context(&self, name: &str) -> Option<&BoundedContextTensor> {
         self.contexts.iter().find(|c| c.name == name)
     }
-    
+
     /// Project a query to find relevant context
     pub fn project(&self, query_tensor: &Tensor) -> crate::Result<ProjectionResult> {
-        use super::ops::{project as tensor_project, cosine_similarity};
-        
+        use super::ops::{cosine_similarity, project as tensor_project};
+
         // Project against organism hologram
         let projection = tensor_project(&self.hologram, query_tensor)?;
-        
+
         // Score each context
-        let mut context_scores: Vec<(String, f32)> = self.contexts.iter()
+        let mut context_scores: Vec<(String, f32)> = self
+            .contexts
+            .iter()
             .filter_map(|ctx| {
                 tensor_project(&ctx.hologram, query_tensor)
                     .ok()
@@ -390,12 +393,12 @@ impl OrganismTensor {
             })
             .filter(|(_, score)| *score > 0.1)
             .collect();
-        
+
         context_scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        
+
         // Score components in relevant contexts
         let mut component_scores: Vec<(ComponentId, f32)> = Vec::new();
-        
+
         for (ctx_name, _) in context_scores.iter().take(3) {
             if let Some(ctx) = self.get_context(ctx_name) {
                 for module in &ctx.modules {
@@ -411,10 +414,10 @@ impl OrganismTensor {
                 }
             }
         }
-        
+
         component_scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         component_scores.truncate(20);
-        
+
         Ok(ProjectionResult {
             query_tensor: query_tensor.clone(),
             contexts: context_scores,
@@ -422,33 +425,39 @@ impl OrganismTensor {
             projection,
         })
     }
-    
+
     /// Check boundary violations in generated code
-    pub fn check_boundaries(&self, from_context: &str, used_items: &[String]) -> Vec<BoundaryViolation> {
+    pub fn check_boundaries(
+        &self,
+        from_context: &str,
+        used_items: &[String],
+    ) -> Vec<BoundaryViolation> {
         let mut violations = Vec::new();
-        
+
         for item in used_items {
             // Find which context the item belongs to
             for ctx in &self.contexts {
-                let item_in_ctx = ctx.modules.iter()
-                    .any(|m| m.path.contains(item) || 
-                         m.components.iter().any(|c| c.id.name == *item));
-                
-                if item_in_ctx && ctx.name != from_context
-                    && !self.boundaries.can_depend(from_context, &ctx.name) {
-                        violations.push(BoundaryViolation {
-                            from_context: from_context.to_string(),
-                            to_context: ctx.name.clone(),
-                            component: item.clone(),
-                            reason: format!(
-                                "Context '{}' cannot depend on '{}' (not in boundary rules)",
-                                from_context, ctx.name
-                            ),
-                        });
-                    }
+                let item_in_ctx = ctx.modules.iter().any(|m| {
+                    m.path.contains(item) || m.components.iter().any(|c| c.id.name == *item)
+                });
+
+                if item_in_ctx
+                    && ctx.name != from_context
+                    && !self.boundaries.can_depend(from_context, &ctx.name)
+                {
+                    violations.push(BoundaryViolation {
+                        from_context: from_context.to_string(),
+                        to_context: ctx.name.clone(),
+                        component: item.clone(),
+                        reason: format!(
+                            "Context '{}' cannot depend on '{}' (not in boundary rules)",
+                            from_context, ctx.name
+                        ),
+                    });
+                }
             }
         }
-        
+
         violations
     }
 }
@@ -462,13 +471,13 @@ impl OrganismTensor {
 pub struct ProjectionResult {
     /// Query embedding
     pub query_tensor: Tensor,
-    
+
     /// Relevant contexts with scores
     pub contexts: Vec<(String, f32)>,
-    
+
     /// Relevant components with scores
     pub components: Vec<(ComponentId, f32)>,
-    
+
     /// The projected tensor
     pub projection: Tensor,
 }
@@ -478,7 +487,7 @@ impl ProjectionResult {
     pub fn top_components(&self, n: usize) -> &[(ComponentId, f32)] {
         &self.components[..n.min(self.components.len())]
     }
-    
+
     /// Get primary context (highest scored)
     pub fn primary_context(&self) -> Option<&str> {
         self.contexts.first().map(|(name, _)| name.as_str())
@@ -490,13 +499,13 @@ impl ProjectionResult {
 pub struct CoherenceResult {
     /// Overall coherence score (0-1)
     pub overall: f32,
-    
+
     /// Pattern coherence (does it match existing patterns?)
     pub pattern_score: f32,
-    
+
     /// Style coherence (does it match coding style?)
     pub style_score: f32,
-    
+
     /// Boundary violations
     pub boundary_violations: Vec<BoundaryViolation>,
 }

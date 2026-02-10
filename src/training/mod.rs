@@ -325,7 +325,7 @@ impl Optimizer {
 // =============================================================================
 
 /// A group of variables with shared hyperparameters
-/// 
+///
 /// Use for different learning rates on different parts of the network.
 /// Common pattern: FiLM layers need 10x lower LR than main network.
 #[derive(Debug, Clone)]
@@ -350,7 +350,7 @@ impl VarGroup {
             name: name.into(),
         }
     }
-    
+
     /// Add weight decay (L2 regularization)
     pub fn with_weight_decay(mut self, wd: f64) -> Self {
         self.weight_decay = wd;
@@ -359,22 +359,22 @@ impl VarGroup {
 }
 
 /// Optimizer with multiple variable groups, each with its own hyperparameters
-/// 
+///
 /// # Example
-/// 
+///
 /// ```ignore
 /// use an_tensor_compiler::training::{VarGroup, GroupedOptimizer};
-/// 
+///
 /// let main_vars = compiled.main_vars();
 /// let film_vars = compiled.film_vars();
-/// 
+///
 /// let groups = vec![
 ///     VarGroup::new("main", main_vars, 0.0003).with_weight_decay(1e-4),
 ///     VarGroup::new("film", film_vars, 0.00003).with_weight_decay(1e-3),
 /// ];
-/// 
+///
 /// let mut optimizer = GroupedOptimizer::adam(groups)?;
-/// 
+///
 /// // Training loop
 /// for batch in batches {
 ///     let loss = forward_and_loss(&batch)?;
@@ -390,38 +390,42 @@ impl GroupedOptimizer {
     /// Create a grouped Adam optimizer
     pub fn adam(groups: Vec<VarGroup>) -> crate::Result<Self> {
         let mut opt_groups = Vec::new();
-        
+
         for group in groups {
             let params = candle_nn::optim::ParamsAdamW {
                 lr: group.learning_rate,
                 weight_decay: group.weight_decay,
                 ..Default::default()
             };
-            
-            let optimizer = <candle_nn::optim::AdamW as CandleOptimizer>::new(
-                group.vars.clone(),
-                params,
-            ).map_err(|e| crate::TensorCoreError::Tensor(
-                format!("AdamW init failed for group '{}': {}", group.name, e)
-            ))?;
-            
+
+            let optimizer =
+                <candle_nn::optim::AdamW as CandleOptimizer>::new(group.vars.clone(), params)
+                    .map_err(|e| {
+                        crate::TensorCoreError::Tensor(format!(
+                            "AdamW init failed for group '{}': {}",
+                            group.name, e
+                        ))
+                    })?;
+
             opt_groups.push((group, optimizer));
         }
-        
+
         Ok(Self { groups: opt_groups })
     }
-    
+
     /// Take a gradient step on all groups
     pub fn step(&mut self, grads: &candle_core::backprop::GradStore) -> crate::Result<()> {
         for (group, opt) in &mut self.groups {
-            CandleOptimizer::step(opt, grads)
-                .map_err(|e| crate::TensorCoreError::Training(
-                    format!("Step failed for group '{}': {}", group.name, e)
-                ))?;
+            CandleOptimizer::step(opt, grads).map_err(|e| {
+                crate::TensorCoreError::Training(format!(
+                    "Step failed for group '{}': {}",
+                    group.name, e
+                ))
+            })?;
         }
         Ok(())
     }
-    
+
     /// Safe step with gradient clipping (recommended for attention/FiLM)
     pub fn safe_step(
         &mut self,
@@ -429,24 +433,19 @@ impl GroupedOptimizer {
         max_grad_norm: f32,
     ) -> crate::Result<()> {
         for (group, opt) in &mut self.groups {
-            safe_optimizer_step(
-                opt,
-                grads,
-                &group.vars,
-                max_grad_norm,
-                group.learning_rate,
-            )?;
+            safe_optimizer_step(opt, grads, &group.vars, max_grad_norm, group.learning_rate)?;
         }
         Ok(())
     }
-    
+
     /// Get learning rate for a named group
     pub fn learning_rate(&self, group_name: &str) -> Option<f64> {
-        self.groups.iter()
+        self.groups
+            .iter()
             .find(|(g, _)| g.name == group_name)
             .map(|(g, _)| g.learning_rate)
     }
-    
+
     /// Set learning rate for a named group
     pub fn set_learning_rate(&mut self, group_name: &str, lr: f64) {
         for (group, opt) in &mut self.groups {
@@ -456,7 +455,7 @@ impl GroupedOptimizer {
             }
         }
     }
-    
+
     /// Get all group names
     pub fn group_names(&self) -> Vec<&str> {
         self.groups.iter().map(|(g, _)| g.name.as_str()).collect()
@@ -634,7 +633,7 @@ pub fn safe_optimizer_step<O: candle_nn::optim::Optimizer>(
     // Compute total gradient norm
     let mut total_sq_norm = 0.0f32;
     let mut has_nan = false;
-    
+
     for var in vars {
         if let Some(grad) = grads.get(var.as_tensor()) {
             // Check for NaN in gradient
@@ -646,11 +645,11 @@ pub fn safe_optimizer_step<O: candle_nn::optim::Optimizer>(
                     }
                 }
             }
-            
+
             if has_nan {
                 break;
             }
-            
+
             let sq_norm = grad
                 .sqr()
                 .and_then(|t| t.sum_all())
@@ -659,41 +658,44 @@ pub fn safe_optimizer_step<O: candle_nn::optim::Optimizer>(
             total_sq_norm += sq_norm;
         }
     }
-    
+
     // If gradients contain NaN, skip this step entirely
     if has_nan {
         return Err(crate::TensorCoreError::Training(
             "NaN detected in gradients - skipping step".into(),
         ));
     }
-    
+
     let total_norm = total_sq_norm.sqrt();
-    
+
     // If gradient norm is too large, scale down manually
     if total_norm > max_grad_norm && total_norm > 0.0 {
         let scale = max_grad_norm / total_norm;
-        
+
         // Manually apply scaled gradient update
         for var in vars {
             if let Some(grad) = grads.get(var.as_tensor()) {
                 let scaled_grad = grad
                     .affine(scale as f64, 0.0)
                     .map_err(|e| crate::TensorCoreError::Tensor(format!("scale failed: {}", e)))?;
-                
+
                 let current = var.as_tensor().clone();
-                let updated = (&current - &scaled_grad.affine(learning_rate, 0.0)
-                    .map_err(|e| crate::TensorCoreError::Tensor(format!("lr scale failed: {}", e)))?)
+                let updated = (&current
+                    - &scaled_grad.affine(learning_rate, 0.0).map_err(|e| {
+                        crate::TensorCoreError::Tensor(format!("lr scale failed: {}", e))
+                    })?)
                     .map_err(|e| crate::TensorCoreError::Tensor(format!("sub failed: {}", e)))?;
-                
+
                 var.set(&updated)
                     .map_err(|e| crate::TensorCoreError::Tensor(format!("set failed: {}", e)))?;
             }
         }
-        
+
         Ok(())
     } else {
         // Normal step
-        optimizer.step(grads)
+        optimizer
+            .step(grads)
             .map_err(|e| crate::TensorCoreError::Training(format!("optimizer step failed: {}", e)))
     }
 }
@@ -719,7 +721,7 @@ pub fn compute_grad_norm(
     vars: &[candle_core::Var],
 ) -> crate::Result<f32> {
     let mut total_sq_norm = 0.0f32;
-    
+
     for var in vars {
         if let Some(grad) = grads.get(var.as_tensor()) {
             let sq_norm = grad
@@ -730,7 +732,7 @@ pub fn compute_grad_norm(
             total_sq_norm += sq_norm;
         }
     }
-    
+
     Ok(total_sq_norm.sqrt())
 }
 
@@ -899,6 +901,3 @@ mod tests {
         assert!(tracker.has_converged(3));
     }
 }
-
-
-

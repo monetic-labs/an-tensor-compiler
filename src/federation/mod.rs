@@ -56,8 +56,8 @@ pub mod algorithms;
 
 // Re-export algorithm types and functions
 pub use algorithms::{
-    weighted_average, fedavg, median, trimmed_mean, accuracy_weighted,
-    ParticipantUpdate, MergeResult,
+    accuracy_weighted, fedavg, median, trimmed_mean, weighted_average, MergeResult,
+    ParticipantUpdate,
 };
 
 use crate::namespace::NamespaceId;
@@ -414,7 +414,8 @@ impl FederationManager {
     pub fn register_predicate(&mut self, name: impl Into<String>) {
         let name = name.into();
         if !self.predicates.contains_key(&name) {
-            self.predicates.insert(name.clone(), FederatedPredicate::new(&name));
+            self.predicates
+                .insert(name.clone(), FederatedPredicate::new(&name));
         }
     }
 
@@ -608,7 +609,7 @@ mod humantime_serde {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::namespace::{TRADING, PIPELINE};
+    use crate::namespace::{PIPELINE, TRADING};
     use candle_core::{Device, Tensor};
 
     fn device() -> Device {
@@ -756,4 +757,3 @@ mod tests {
         assert!((vals[1] - 5.0).abs() < 0.001);
     }
 }
-

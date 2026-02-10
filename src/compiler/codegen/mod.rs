@@ -30,8 +30,11 @@ pub mod attention;
 pub mod utils;
 
 pub use attention::AttentionParams;
-pub use utils::{sparse_coo_to_dense, detect_sparse_coo, get_adjacency_matrix};
-use utils::{apply_activation, apply_layer_norm, apply_dropout, apply_multi_head_attention, l2_normalize, normalize_adjacency};
+use utils::{
+    apply_activation, apply_dropout, apply_layer_norm, apply_multi_head_attention, l2_normalize,
+    normalize_adjacency,
+};
+pub use utils::{detect_sparse_coo, get_adjacency_matrix, sparse_coo_to_dense};
 
 use std::collections::HashMap;
 
@@ -78,11 +81,11 @@ pub enum CompiledPredicate {
         input_names: Vec<String>,
         /// First layer weights: [input_dim, hidden_dim]
         w1: Var,
-        /// First layer bias: [hidden_dim]
+        /// First layer bias: `[hidden_dim]`
         b1: Var,
         /// Second layer weights: [hidden_dim, 1]
         w2: Var,
-        /// Second layer bias: [1]
+        /// Second layer bias: `[1]`
         b2: Var,
         /// Activation function
         activation: super::Activation,
@@ -159,11 +162,19 @@ impl CompiledPredicate {
                 })?;
 
                 // Apply soft threshold
-                let sharp = if *greater_than { *sharpness } else { -*sharpness };
+                let sharp = if *greater_than {
+                    *sharpness
+                } else {
+                    -*sharpness
+                };
                 soft_threshold_scalar(input, *threshold, sharp)
             }
 
-            CompiledPredicate::Learned { name, weights, bias } => {
+            CompiledPredicate::Learned {
+                name,
+                weights,
+                bias,
+            } => {
                 let input = inputs.get(name).ok_or_else(|| {
                     TensorCoreError::Compiler(format!(
                         "Missing input '{}' for learned predicate",
@@ -200,12 +211,15 @@ impl CompiledPredicate {
             } => {
                 // Gather and concatenate inputs
                 let input = if input_names.len() == 1 {
-                    inputs.get(&input_names[0]).ok_or_else(|| {
-                        TensorCoreError::Compiler(format!(
-                            "Missing input '{}' for learned projection",
-                            input_names[0]
-                        ))
-                    })?.clone()
+                    inputs
+                        .get(&input_names[0])
+                        .ok_or_else(|| {
+                            TensorCoreError::Compiler(format!(
+                                "Missing input '{}' for learned projection",
+                                input_names[0]
+                            ))
+                        })?
+                        .clone()
                 } else {
                     let tensors: Result<Vec<Tensor>> = input_names
                         .iter()
@@ -228,14 +242,16 @@ impl CompiledPredicate {
                 // ═══════════════════════════════════════════════════════════════════════
                 // Clamp all trainable weights to prevent explosion after gradient updates.
                 const MLP_WEIGHT_MAX: f32 = 10.0;
-                
-                let w1_clamped = w1.as_tensor()
+
+                let w1_clamped = w1
+                    .as_tensor()
                     .clamp(-MLP_WEIGHT_MAX, MLP_WEIGHT_MAX)
                     .map_err(|e| TensorCoreError::Tensor(format!("w1 clamp failed: {}", e)))?;
-                let b1_clamped = b1.as_tensor()
+                let b1_clamped = b1
+                    .as_tensor()
                     .clamp(-MLP_WEIGHT_MAX, MLP_WEIGHT_MAX)
                     .map_err(|e| TensorCoreError::Tensor(format!("b1 clamp failed: {}", e)))?;
-                
+
                 // Layer 1: input → hidden
                 let mut h1 = input
                     .matmul(&w1_clamped)
@@ -248,7 +264,7 @@ impl CompiledPredicate {
                 if let Some((gamma, beta)) = ln1 {
                     h1 = apply_layer_norm(&h1, gamma, beta)?;
                 }
-                
+
                 // ═══════════════════════════════════════════════════════════════════════
                 // RESIDUAL CONNECTION FIX (Research Team Directive 2024-12-31)
                 // ═══════════════════════════════════════════════════════════════════════
@@ -262,11 +278,18 @@ impl CompiledPredicate {
                     if let Some(proj) = residual_proj {
                         // For input_dim != hidden_dim: project input through residual_proj
                         // Clamp residual projection weights for stability
-                        let proj_clamped = proj.as_tensor()
+                        let proj_clamped = proj
+                            .as_tensor()
                             .clamp(-MLP_WEIGHT_MAX, MLP_WEIGHT_MAX)
-                            .map_err(|e| TensorCoreError::Tensor(format!("residual proj clamp failed: {}", e)))?;
-                        Some(input.matmul(&proj_clamped)
-                            .map_err(|e| TensorCoreError::Tensor(format!("residual proj failed: {}", e)))?)
+                            .map_err(|e| {
+                                TensorCoreError::Tensor(format!(
+                                    "residual proj clamp failed: {}",
+                                    e
+                                ))
+                            })?;
+                        Some(input.matmul(&proj_clamped).map_err(|e| {
+                            TensorCoreError::Tensor(format!("residual proj failed: {}", e))
+                        })?)
                     } else if input.dims() == h1.dims() {
                         // Same dims: use the normalized h1 before activation
                         Some(h1.clone())
@@ -291,14 +314,21 @@ impl CompiledPredicate {
                 // Apply multi-head attention if enabled
                 if let Some(attn) = attention {
                     let attn_out = apply_multi_head_attention(&h1, attn, *attention_dropout_rate)?;
-                    
+
                     // Add residual connection around attention
                     // Clamp after addition to prevent value explosion
                     h1 = (&h1 + &attn_out)
-                        .map_err(|e| TensorCoreError::Tensor(format!("attention residual add failed: {}", e)))?
+                        .map_err(|e| {
+                            TensorCoreError::Tensor(format!("attention residual add failed: {}", e))
+                        })?
                         .clamp(-100.0f32, 100.0f32)
-                        .map_err(|e| TensorCoreError::Tensor(format!("attention residual clamp failed: {}", e)))?;
-                    
+                        .map_err(|e| {
+                            TensorCoreError::Tensor(format!(
+                                "attention residual clamp failed: {}",
+                                e
+                            ))
+                        })?;
+
                     // Apply post-attention LayerNorm
                     if let Some((gamma, beta)) = ln_attn {
                         h1 = apply_layer_norm(&h1, gamma, beta)?;
@@ -309,19 +339,25 @@ impl CompiledPredicate {
                 if let Some(res) = residual_input {
                     // Clamp after residual addition to prevent accumulation
                     h1 = (&h1 + &res)
-                        .map_err(|e| TensorCoreError::Tensor(format!("residual add failed: {}", e)))?
+                        .map_err(|e| {
+                            TensorCoreError::Tensor(format!("residual add failed: {}", e))
+                        })?
                         .clamp(-100.0f32, 100.0f32)
-                        .map_err(|e| TensorCoreError::Tensor(format!("residual clamp failed: {}", e)))?;
+                        .map_err(|e| {
+                            TensorCoreError::Tensor(format!("residual clamp failed: {}", e))
+                        })?;
                 }
 
                 // Layer 2: hidden → 1 (with clamped weights)
-                let w2_clamped = w2.as_tensor()
+                let w2_clamped = w2
+                    .as_tensor()
                     .clamp(-MLP_WEIGHT_MAX, MLP_WEIGHT_MAX)
                     .map_err(|e| TensorCoreError::Tensor(format!("w2 clamp failed: {}", e)))?;
-                let b2_clamped = b2.as_tensor()
+                let b2_clamped = b2
+                    .as_tensor()
                     .clamp(-MLP_WEIGHT_MAX, MLP_WEIGHT_MAX)
                     .map_err(|e| TensorCoreError::Tensor(format!("b2 clamp failed: {}", e)))?;
-                
+
                 let mut h2 = h1
                     .matmul(&w2_clamped)
                     .map_err(|e| TensorCoreError::Tensor(format!("matmul w2 failed: {}", e)))?;
@@ -367,25 +403,25 @@ impl CompiledPredicate {
                             .map_err(|e| TensorCoreError::Tensor(format!("mul failed: {}", e)))?;
 
                         if let (Some(w), Some(b)) = (weights, bias) {
-                            let score = product
-                                .matmul(w.as_tensor())
-                                .map_err(|e| TensorCoreError::Tensor(format!("matmul failed: {}", e)))?;
-                            let score = score
-                                .broadcast_add(b.as_tensor())
-                                .map_err(|e| TensorCoreError::Tensor(format!("add failed: {}", e)))?;
+                            let score = product.matmul(w.as_tensor()).map_err(|e| {
+                                TensorCoreError::Tensor(format!("matmul failed: {}", e))
+                            })?;
+                            let score = score.broadcast_add(b.as_tensor()).map_err(|e| {
+                                TensorCoreError::Tensor(format!("add failed: {}", e))
+                            })?;
                             // Squeeze to 1D for consistency with other predicates
-                            let score = score
-                                .squeeze(1)
-                                .map_err(|e| TensorCoreError::Tensor(format!("squeeze failed: {}", e)))?;
+                            let score = score.squeeze(1).map_err(|e| {
+                                TensorCoreError::Tensor(format!("squeeze failed: {}", e))
+                            })?;
                             crate::primitives::sigmoid(&score)
                         } else {
                             // Fallback: sum and normalize
-                            let sum = product
-                                .sum_keepdim(1)
-                                .map_err(|e| TensorCoreError::Tensor(format!("sum failed: {}", e)))?;
-                            let sum = sum
-                                .squeeze(1)
-                                .map_err(|e| TensorCoreError::Tensor(format!("squeeze failed: {}", e)))?;
+                            let sum = product.sum_keepdim(1).map_err(|e| {
+                                TensorCoreError::Tensor(format!("sum failed: {}", e))
+                            })?;
+                            let sum = sum.squeeze(1).map_err(|e| {
+                                TensorCoreError::Tensor(format!("squeeze failed: {}", e))
+                            })?;
                             crate::primitives::sigmoid(&sum)
                         }
                     }
@@ -402,9 +438,9 @@ impl CompiledPredicate {
                             .map_err(|e| TensorCoreError::Tensor(format!("sum failed: {}", e)))?;
 
                         // Squeeze to 1D
-                        let dot = dot
-                            .squeeze(1)
-                            .map_err(|e| TensorCoreError::Tensor(format!("squeeze failed: {}", e)))?;
+                        let dot = dot.squeeze(1).map_err(|e| {
+                            TensorCoreError::Tensor(format!("squeeze failed: {}", e))
+                        })?;
 
                         // Map from [-1, 1] to [0, 1]
                         let one = Tensor::ones_like(&dot)
@@ -422,9 +458,9 @@ impl CompiledPredicate {
                             .sum_keepdim(1)
                             .map_err(|e| TensorCoreError::Tensor(format!("sum failed: {}", e)))?;
                         // Squeeze to 1D
-                        let dot = dot
-                            .squeeze(1)
-                            .map_err(|e| TensorCoreError::Tensor(format!("squeeze failed: {}", e)))?;
+                        let dot = dot.squeeze(1).map_err(|e| {
+                            TensorCoreError::Tensor(format!("squeeze failed: {}", e))
+                        })?;
                         crate::primitives::sigmoid(&dot)
                     }
 
@@ -432,25 +468,27 @@ impl CompiledPredicate {
                         // aᵀWb → sigmoid
                         if let Some(w) = bilinear_w {
                             // left @ W @ right.T
-                            let lw = left
-                                .matmul(w.as_tensor())
-                                .map_err(|e| TensorCoreError::Tensor(format!("matmul failed: {}", e)))?;
-                            
+                            let lw = left.matmul(w.as_tensor()).map_err(|e| {
+                                TensorCoreError::Tensor(format!("matmul failed: {}", e))
+                            })?;
+
                             // For batched: element-wise multiply and sum
                             let score = (&lw * right)
                                 .map_err(|e| TensorCoreError::Tensor(format!("mul failed: {}", e)))?
                                 .sum_keepdim(1)
-                                .map_err(|e| TensorCoreError::Tensor(format!("sum failed: {}", e)))?;
+                                .map_err(|e| {
+                                    TensorCoreError::Tensor(format!("sum failed: {}", e))
+                                })?;
 
                             // Squeeze to 1D
-                            let score = score
-                                .squeeze(1)
-                                .map_err(|e| TensorCoreError::Tensor(format!("squeeze failed: {}", e)))?;
+                            let score = score.squeeze(1).map_err(|e| {
+                                TensorCoreError::Tensor(format!("squeeze failed: {}", e))
+                            })?;
 
                             if let Some(b) = bias {
-                                let score = score
-                                    .broadcast_add(b.as_tensor())
-                                    .map_err(|e| TensorCoreError::Tensor(format!("add failed: {}", e)))?;
+                                let score = score.broadcast_add(b.as_tensor()).map_err(|e| {
+                                    TensorCoreError::Tensor(format!("add failed: {}", e))
+                                })?;
                                 crate::primitives::sigmoid(&score)
                             } else {
                                 crate::primitives::sigmoid(&score)
@@ -478,7 +516,7 @@ impl CompiledPredicate {
                         node_features_name
                     ))
                 })?;
-                
+
                 // Get adjacency matrix (supports both dense and sparse COO formats)
                 let adjacency = get_adjacency_matrix(inputs, adjacency_name, device)?;
 
@@ -489,16 +527,18 @@ impl CompiledPredicate {
                 let mut h = node_features.clone();
                 for (w_self, w_neighbor, bias) in layers {
                     // Self transform
-                    let h_self = h
-                        .matmul(w_self.as_tensor())
-                        .map_err(|e| TensorCoreError::Tensor(format!("matmul self failed: {}", e)))?;
+                    let h_self = h.matmul(w_self.as_tensor()).map_err(|e| {
+                        TensorCoreError::Tensor(format!("matmul self failed: {}", e))
+                    })?;
 
                     // Neighbor aggregation: A @ H @ W_neighbor
                     let h_neighbor = adj_norm
                         .matmul(&h)
                         .map_err(|e| TensorCoreError::Tensor(format!("adj matmul failed: {}", e)))?
                         .matmul(w_neighbor.as_tensor())
-                        .map_err(|e| TensorCoreError::Tensor(format!("matmul neighbor failed: {}", e)))?;
+                        .map_err(|e| {
+                            TensorCoreError::Tensor(format!("matmul neighbor failed: {}", e))
+                        })?;
 
                     // Combine and apply non-linearity
                     h = (&h_self + &h_neighbor)
@@ -522,14 +562,9 @@ impl CompiledPredicate {
                 crate::primitives::sigmoid(&out)
             }
 
-            CompiledPredicate::External { name } => {
-                inputs.get(name).cloned().ok_or_else(|| {
-                    TensorCoreError::Compiler(format!(
-                        "Missing external predicate input '{}'",
-                        name
-                    ))
-                })
-            }
+            CompiledPredicate::External { name } => inputs.get(name).cloned().ok_or_else(|| {
+                TensorCoreError::Compiler(format!("Missing external predicate input '{}'", name))
+            }),
         }
     }
 
@@ -539,36 +574,49 @@ impl CompiledPredicate {
             CompiledPredicate::Learned { weights, bias, .. } => {
                 vec![weights.clone(), bias.clone()]
             }
-            CompiledPredicate::LearnedProjection { 
-                w1, b1, w2, b2, ln1, attention, ln_attn, residual_proj, .. 
+            CompiledPredicate::LearnedProjection {
+                w1,
+                b1,
+                w2,
+                b2,
+                ln1,
+                attention,
+                ln_attn,
+                residual_proj,
+                ..
             } => {
                 let mut vars = vec![w1.clone(), b1.clone(), w2.clone(), b2.clone()];
-                
+
                 // Add LayerNorm parameters
                 if let Some((gamma, beta)) = ln1 {
                     vars.push(gamma.clone());
                     vars.push(beta.clone());
                 }
-                
+
                 // Add attention parameters
                 if let Some(attn) = attention {
                     vars.extend(attn.trainable_vars());
                 }
-                
+
                 // Add post-attention LayerNorm
                 if let Some((gamma, beta)) = ln_attn {
                     vars.push(gamma.clone());
                     vars.push(beta.clone());
                 }
-                
+
                 // Add residual projection if present
                 if let Some(proj) = residual_proj {
                     vars.push(proj.clone());
                 }
-                
+
                 vars
             }
-            CompiledPredicate::LearnedSimilarity { weights, bias, bilinear_w, .. } => {
+            CompiledPredicate::LearnedSimilarity {
+                weights,
+                bias,
+                bilinear_w,
+                ..
+            } => {
                 let mut vars = Vec::new();
                 if let Some(w) = weights {
                     vars.push(w.clone());
@@ -581,7 +629,12 @@ impl CompiledPredicate {
                 }
                 vars
             }
-            CompiledPredicate::GraphNeural { layers, output_w, output_b, .. } => {
+            CompiledPredicate::GraphNeural {
+                layers,
+                output_w,
+                output_b,
+                ..
+            } => {
                 let mut vars: Vec<Var> = layers
                     .iter()
                     .flat_map(|(w_self, w_neighbor, bias)| {
@@ -619,10 +672,7 @@ pub struct CompiledLiteral {
 
 impl CompiledLiteral {
     /// Evaluate this literal
-    pub fn evaluate(
-        &self,
-        predicate_activation: &Tensor,
-    ) -> Result<Tensor> {
+    pub fn evaluate(&self, predicate_activation: &Tensor) -> Result<Tensor> {
         if self.negated {
             fuzzy_not(predicate_activation)
         } else {
@@ -651,17 +701,14 @@ impl CompiledBody {
     ///
     /// Returns the fuzzy AND of all literals.
     /// For facts (empty body), returns 1.0 (unconditionally true).
-    pub fn evaluate(
-        &self,
-        predicate_activations: &[Tensor],
-        device: &Device,
-    ) -> Result<Tensor> {
+    pub fn evaluate(&self, predicate_activations: &[Tensor], device: &Device) -> Result<Tensor> {
         // Facts have empty bodies and are unconditionally true
         if self.literals.is_empty() {
             // Return 1.0 with same shape as other activations
             // Use shape [1] for scalar output
-            return Tensor::from_vec(vec![1.0f32], 1, device)
-                .map_err(|e| TensorCoreError::Compiler(format!("Failed to create fact tensor: {}", e)));
+            return Tensor::from_vec(vec![1.0f32], 1, device).map_err(|e| {
+                TensorCoreError::Compiler(format!("Failed to create fact tensor: {}", e))
+            });
         }
 
         // Evaluate first literal
@@ -803,20 +850,21 @@ impl CompiledRuleSet {
 
         for (idx, pred) in self.predicates.iter().enumerate() {
             let activation = pred.evaluate(inputs, &self.device)?;
-            
+
             // Extract scalar for explanation (take mean if batched)
             let scalar = activation
                 .mean_all()
                 .map_err(|e| TensorCoreError::Tensor(format!("mean failed: {}", e)))?
                 .to_scalar::<f32>()
                 .unwrap_or(0.0);
-            
-            let pred_name = self.predicate_indices
+
+            let pred_name = self
+                .predicate_indices
                 .iter()
                 .find(|(_, &i)| i == idx)
                 .map(|(n, _)| n.clone())
                 .unwrap_or_default();
-            
+
             predicate_activation_map.insert(pred_name, scalar);
             predicate_activations.push(activation);
         }
@@ -827,14 +875,14 @@ impl CompiledRuleSet {
 
         for body in &self.bodies {
             let body_result = body.evaluate(&predicate_activations, &self.device)?;
-            
+
             // Extract scalar for explanation
             let scalar = body_result
                 .mean_all()
                 .map_err(|e| TensorCoreError::Tensor(format!("mean failed: {}", e)))?
                 .to_scalar::<f32>()
                 .unwrap_or(0.0);
-            
+
             let rule_name = format!("rule_{}", body.rule_idx);
             rule_activation_map.insert(rule_name, scalar);
             rule_results.push(body_result);
@@ -867,23 +915,23 @@ impl CompiledRuleSet {
             rule_weights,
         })
     }
-    
+
     /// Fast inference path - returns just the output tensor
-    /// 
+    ///
     /// This is ~20x faster than `forward()` because it:
     /// - Skips all explanation generation
     /// - Avoids CPU/GPU sync for scalar extraction
     /// - Minimizes allocation overhead
-    /// 
+    ///
     /// Use this for production inference when you don't need explanations.
-    /// 
+    ///
     /// # Example
-    /// 
+    ///
     /// ```ignore
     /// // For backtesting where speed matters:
     /// let prob = compiled.forward_fast(&inputs)?;
     /// let should_trade = prob.to_scalar::<f32>()? > 0.5;
-    /// 
+    ///
     /// // Only get explanations when needed:
     /// if should_trade && need_explanation {
     ///     let output = compiled.forward(&inputs)?;
@@ -916,30 +964,30 @@ impl CompiledRuleSet {
             fuzzy_or_many(&refs)
         }
     }
-    
+
     /// Batched fast inference - evaluate multiple inputs in parallel
-    /// 
+    ///
     /// Even faster than multiple `forward_fast()` calls because:
     /// - Single tensor allocation for all samples
     /// - Better GPU utilization for batch matmuls
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `batch_inputs` - Vec of input HashMaps, one per sample.
-    ///   Each input tensor should have shape [1, features] or [features].
-    /// 
+    ///   Each input tensor should have shape `[1, features]` or `[features]`.
+    ///
     /// # Returns
-    /// 
+    ///
     /// Tensor of shape [batch_size, 1] with output probabilities
-    /// 
+    ///
     /// # Example
-    /// 
+    ///
     /// ```ignore
     /// let inputs: Vec<HashMap<String, Tensor>> = symbols
     ///     .iter()
     ///     .map(|sym| build_inputs(sym, bar))
     ///     .collect();
-    /// 
+    ///
     /// let probs = compiled.forward_batch(&inputs)?;
     /// // probs shape: [num_symbols, 1]
     /// ```
@@ -947,45 +995,46 @@ impl CompiledRuleSet {
         if batch_inputs.is_empty() {
             return Err(TensorCoreError::Compiler("Empty batch".into()));
         }
-        
+
         // Stack all inputs into batched tensors
         let input_keys: Vec<String> = batch_inputs[0].keys().cloned().collect();
         let mut batched_inputs: HashMap<String, Tensor> = HashMap::new();
-        
+
         for key in &input_keys {
             let tensors: Result<Vec<Tensor>> = batch_inputs
                 .iter()
                 .map(|inputs| {
-                    let t = inputs.get(key)
-                        .cloned()
-                        .ok_or_else(|| TensorCoreError::Compiler(
-                            format!("Missing input '{}' in batch", key)
-                        ))?;
-                    
+                    let t = inputs.get(key).cloned().ok_or_else(|| {
+                        TensorCoreError::Compiler(format!("Missing input '{}' in batch", key))
+                    })?;
+
                     // Ensure 2D: [1, features] - squeeze if [1, 1, features]
                     let dims = t.dims();
                     if dims.len() == 2 {
                         Ok(t)
                     } else if dims.len() == 1 {
                         // [features] -> [1, features]
-                        t.unsqueeze(0).map_err(|e| TensorCoreError::Tensor(format!("Unsqueeze failed: {}", e)))
+                        t.unsqueeze(0).map_err(|e| {
+                            TensorCoreError::Tensor(format!("Unsqueeze failed: {}", e))
+                        })
                     } else {
                         // [1, 1, features] -> [1, features]
-                        t.squeeze(0).map_err(|e| TensorCoreError::Tensor(format!("Squeeze failed: {}", e)))
+                        t.squeeze(0)
+                            .map_err(|e| TensorCoreError::Tensor(format!("Squeeze failed: {}", e)))
                     }
                 })
                 .collect();
-            
+
             let tensors = tensors?;
             let refs: Vec<&Tensor> = tensors.iter().collect();
-            
+
             // Concatenate along batch dimension (dim 0) - creates [batch_size, features]
             let batched = Tensor::cat(&refs, 0)
                 .map_err(|e| TensorCoreError::Tensor(format!("Batch cat failed: {}", e)))?;
-            
+
             batched_inputs.insert(key.clone(), batched);
         }
-        
+
         // Run forward pass on batched inputs
         self.forward_fast(&batched_inputs)
     }
@@ -1005,14 +1054,14 @@ impl CompiledRuleSet {
             .map(|v| v.as_tensor().elem_count())
             .sum()
     }
-    
+
     /// Clamp all attention weights to prevent gradient explosion
-    /// 
+    ///
     /// Call this after `optimizer.step()` to keep attention weights bounded.
     /// This prevents the Q/K weight explosion that causes NaN after training steps.
-    /// 
+    ///
     /// # Example
-    /// 
+    ///
     /// ```ignore
     /// for epoch in 0..100 {
     ///     let output = compiled.forward(&inputs)?;
@@ -1024,25 +1073,29 @@ impl CompiledRuleSet {
     ///     compiled.clamp_attention_weights(10.0)?;
     /// }
     /// ```
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `max_val` - Maximum absolute value for attention weights (recommended: 10.0)
     pub fn clamp_attention_weights(&self, max_val: f32) -> Result<()> {
         for predicate in &self.predicates {
-            if let CompiledPredicate::LearnedProjection { attention: Some(attn_params), .. } = predicate {
-                    attn_params.clamp_weights(max_val)?;
+            if let CompiledPredicate::LearnedProjection {
+                attention: Some(attn_params),
+                ..
+            } = predicate
+            {
+                attn_params.clamp_weights(max_val)?;
             }
         }
         Ok(())
     }
-    
+
     /// Check if any trainable variable contains NaN or Inf
-    /// 
+    ///
     /// Useful for debugging training instability.
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// `Some((var_index, issue))` if a problem is found, `None` if all OK.
     pub fn check_weights_health(&self) -> Option<(usize, &'static str)> {
         for (i, var) in self.trainable_vars().iter().enumerate() {
@@ -1060,25 +1113,25 @@ impl CompiledRuleSet {
         }
         None
     }
-    
+
     /// Get FiLM conditioning variables (for separate optimizer groups)
-    /// 
+    ///
     /// Returns an empty vector if FiLM is not enabled.
     pub fn film_vars(&self) -> Vec<candle_core::Var> {
         // FiLM variables are the gamma/beta scales inside LearnedProjection predicates
         // For now, return empty since we haven't implemented FiLM-specific var separation
         Vec::new()
     }
-    
+
     /// Get main (non-FiLM) trainable variables
-    /// 
+    ///
     /// Returns all trainable variables when FiLM is not used.
     pub fn main_vars(&self) -> Vec<candle_core::Var> {
         self.trainable_vars()
     }
-    
+
     /// Check if FiLM conditioning is enabled in any predicate
-    /// 
+    ///
     /// Note: FiLM conditioning info is stored in PredicateSpec during compilation,
     /// not in the CompiledPredicate. This returns false for now as FiLM vars
     /// are integrated into the main trainable_vars.
@@ -1136,7 +1189,7 @@ fn compile_predicate_from_spec(
             layer_norm,
             dropout,
             residual,
-            conditioning_dim: _,  // TODO: Implement FiLM conditioning in compiled form
+            conditioning_dim: _, // TODO: Implement FiLM conditioning in compiled form
             conditioning_type: _,
             film_identity_init: _,
         } => {
@@ -1148,8 +1201,9 @@ fn compile_predicate_from_spec(
             let w1 = Var::from_tensor(
                 &Tensor::randn(0.0f32, scale1, (*input_dim, *hidden_dim), device)
                     .map_err(|e| TensorCoreError::Tensor(format!("Failed to create w1: {}", e)))?,
-            ).map_err(|e| TensorCoreError::Tensor(format!("Failed to create w1 var: {}", e)))?;
-            
+            )
+            .map_err(|e| TensorCoreError::Tensor(format!("Failed to create w1 var: {}", e)))?;
+
             let b1 = Var::zeros(*hidden_dim, DType::F32, device)
                 .map_err(|e| TensorCoreError::Tensor(format!("Failed to create b1: {}", e)))?;
 
@@ -1157,21 +1211,26 @@ fn compile_predicate_from_spec(
             let w2 = Var::from_tensor(
                 &Tensor::randn(0.0f32, scale2, (*hidden_dim, 1), device)
                     .map_err(|e| TensorCoreError::Tensor(format!("Failed to create w2: {}", e)))?,
-            ).map_err(|e| TensorCoreError::Tensor(format!("Failed to create w2 var: {}", e)))?;
-            
+            )
+            .map_err(|e| TensorCoreError::Tensor(format!("Failed to create w2 var: {}", e)))?;
+
             let b2 = Var::zeros(1, DType::F32, device)
                 .map_err(|e| TensorCoreError::Tensor(format!("Failed to create b2: {}", e)))?;
 
             // Optional LayerNorm for first layer
             let ln1 = if layer_norm.unwrap_or(false) {
-                let gamma = Var::from_tensor(
-                    &Tensor::ones(*hidden_dim, DType::F32, device)
-                        .map_err(|e| TensorCoreError::Tensor(format!("Failed to create ln1 gamma: {}", e)))?,
-                ).map_err(|e| TensorCoreError::Tensor(format!("Failed to create ln1 gamma var: {}", e)))?;
-                
-                let beta = Var::zeros(*hidden_dim, DType::F32, device)
-                    .map_err(|e| TensorCoreError::Tensor(format!("Failed to create ln1 beta: {}", e)))?;
-                
+                let gamma =
+                    Var::from_tensor(&Tensor::ones(*hidden_dim, DType::F32, device).map_err(
+                        |e| TensorCoreError::Tensor(format!("Failed to create ln1 gamma: {}", e)),
+                    )?)
+                    .map_err(|e| {
+                        TensorCoreError::Tensor(format!("Failed to create ln1 gamma var: {}", e))
+                    })?;
+
+                let beta = Var::zeros(*hidden_dim, DType::F32, device).map_err(|e| {
+                    TensorCoreError::Tensor(format!("Failed to create ln1 beta: {}", e))
+                })?;
+
                 Some((gamma, beta))
             } else {
                 None
@@ -1180,22 +1239,33 @@ fn compile_predicate_from_spec(
             // Optional multi-head attention
             let (attention, ln_attn) = if let Some(num_heads) = attention_heads {
                 let attn_params = AttentionParams::new(*hidden_dim, *num_heads, device)?;
-                
+
                 // Post-attention LayerNorm
                 let ln = if layer_norm.unwrap_or(false) {
                     let gamma = Var::from_tensor(
-                        &Tensor::ones(*hidden_dim, DType::F32, device)
-                            .map_err(|e| TensorCoreError::Tensor(format!("Failed to create ln_attn gamma: {}", e)))?,
-                    ).map_err(|e| TensorCoreError::Tensor(format!("Failed to create ln_attn gamma var: {}", e)))?;
-                    
-                    let beta = Var::zeros(*hidden_dim, DType::F32, device)
-                        .map_err(|e| TensorCoreError::Tensor(format!("Failed to create ln_attn beta: {}", e)))?;
-                    
+                        &Tensor::ones(*hidden_dim, DType::F32, device).map_err(|e| {
+                            TensorCoreError::Tensor(format!(
+                                "Failed to create ln_attn gamma: {}",
+                                e
+                            ))
+                        })?,
+                    )
+                    .map_err(|e| {
+                        TensorCoreError::Tensor(format!(
+                            "Failed to create ln_attn gamma var: {}",
+                            e
+                        ))
+                    })?;
+
+                    let beta = Var::zeros(*hidden_dim, DType::F32, device).map_err(|e| {
+                        TensorCoreError::Tensor(format!("Failed to create ln_attn beta: {}", e))
+                    })?;
+
                     Some((gamma, beta))
                 } else {
                     None
                 };
-                
+
                 (Some(attn_params), ln)
             } else {
                 (None, None)
@@ -1205,9 +1275,18 @@ fn compile_predicate_from_spec(
             let use_residual = residual.unwrap_or(false);
             let residual_proj = if use_residual && input_dim != hidden_dim {
                 let proj = Var::from_tensor(
-                    &Tensor::randn(0.0f32, scale1, (*input_dim, *hidden_dim), device)
-                        .map_err(|e| TensorCoreError::Tensor(format!("Failed to create residual proj: {}", e)))?,
-                ).map_err(|e| TensorCoreError::Tensor(format!("Failed to create residual proj var: {}", e)))?;
+                    &Tensor::randn(0.0f32, scale1, (*input_dim, *hidden_dim), device).map_err(
+                        |e| {
+                            TensorCoreError::Tensor(format!(
+                                "Failed to create residual proj: {}",
+                                e
+                            ))
+                        },
+                    )?,
+                )
+                .map_err(|e| {
+                    TensorCoreError::Tensor(format!("Failed to create residual proj var: {}", e))
+                })?;
                 Some(proj)
             } else {
                 None
@@ -1240,26 +1319,42 @@ fn compile_predicate_from_spec(
                 super::SimilarityMethod::Learned => {
                     // Weights for element-wise product aggregation
                     let w = Var::from_tensor(
-                        &Tensor::randn(0.0f32, 0.01f32, (*dim, 1), device)
-                            .map_err(|e| TensorCoreError::Tensor(format!("Failed to create similarity weights: {}", e)))?,
-                    ).map_err(|e| TensorCoreError::Tensor(format!("Failed to create weights var: {}", e)))?;
-                    
-                    let b = Var::zeros(1, DType::F32, device)
-                        .map_err(|e| TensorCoreError::Tensor(format!("Failed to create similarity bias: {}", e)))?;
-                    
+                        &Tensor::randn(0.0f32, 0.01f32, (*dim, 1), device).map_err(|e| {
+                            TensorCoreError::Tensor(format!(
+                                "Failed to create similarity weights: {}",
+                                e
+                            ))
+                        })?,
+                    )
+                    .map_err(|e| {
+                        TensorCoreError::Tensor(format!("Failed to create weights var: {}", e))
+                    })?;
+
+                    let b = Var::zeros(1, DType::F32, device).map_err(|e| {
+                        TensorCoreError::Tensor(format!("Failed to create similarity bias: {}", e))
+                    })?;
+
                     (Some(w), Some(b), None)
                 }
                 super::SimilarityMethod::Bilinear => {
                     // Bilinear weight matrix
                     let scale = (2.0f32 / (2.0f32 * *dim as f32)).sqrt();
                     let bw = Var::from_tensor(
-                        &Tensor::randn(0.0f32, scale, (*dim, *dim), device)
-                            .map_err(|e| TensorCoreError::Tensor(format!("Failed to create bilinear weights: {}", e)))?,
-                    ).map_err(|e| TensorCoreError::Tensor(format!("Failed to create bilinear var: {}", e)))?;
-                    
-                    let b = Var::zeros(1, DType::F32, device)
-                        .map_err(|e| TensorCoreError::Tensor(format!("Failed to create bilinear bias: {}", e)))?;
-                    
+                        &Tensor::randn(0.0f32, scale, (*dim, *dim), device).map_err(|e| {
+                            TensorCoreError::Tensor(format!(
+                                "Failed to create bilinear weights: {}",
+                                e
+                            ))
+                        })?,
+                    )
+                    .map_err(|e| {
+                        TensorCoreError::Tensor(format!("Failed to create bilinear var: {}", e))
+                    })?;
+
+                    let b = Var::zeros(1, DType::F32, device).map_err(|e| {
+                        TensorCoreError::Tensor(format!("Failed to create bilinear bias: {}", e))
+                    })?;
+
                     (None, Some(b), Some(bw))
                 }
                 super::SimilarityMethod::Cosine | super::SimilarityMethod::DotNormalized => {
@@ -1287,27 +1382,36 @@ fn compile_predicate_from_spec(
             aggregation,
         } => {
             let mut layers = Vec::with_capacity(*num_layers);
-            
+
             let mut current_dim = *feature_dim;
             for _ in 0..*num_layers {
                 let scale = (2.0f32 / (current_dim + *hidden_dim) as f32).sqrt();
-                
+
                 // W_self: current_dim → hidden_dim
                 let w_self = Var::from_tensor(
-                    &Tensor::randn(0.0f32, scale, (current_dim, *hidden_dim), device)
-                        .map_err(|e| TensorCoreError::Tensor(format!("Failed to create w_self: {}", e)))?,
-                ).map_err(|e| TensorCoreError::Tensor(format!("Failed to create w_self var: {}", e)))?;
-                
+                    &Tensor::randn(0.0f32, scale, (current_dim, *hidden_dim), device).map_err(
+                        |e| TensorCoreError::Tensor(format!("Failed to create w_self: {}", e)),
+                    )?,
+                )
+                .map_err(|e| {
+                    TensorCoreError::Tensor(format!("Failed to create w_self var: {}", e))
+                })?;
+
                 // W_neighbor: current_dim → hidden_dim
                 let w_neighbor = Var::from_tensor(
-                    &Tensor::randn(0.0f32, scale, (current_dim, *hidden_dim), device)
-                        .map_err(|e| TensorCoreError::Tensor(format!("Failed to create w_neighbor: {}", e)))?,
-                ).map_err(|e| TensorCoreError::Tensor(format!("Failed to create w_neighbor var: {}", e)))?;
-                
+                    &Tensor::randn(0.0f32, scale, (current_dim, *hidden_dim), device).map_err(
+                        |e| TensorCoreError::Tensor(format!("Failed to create w_neighbor: {}", e)),
+                    )?,
+                )
+                .map_err(|e| {
+                    TensorCoreError::Tensor(format!("Failed to create w_neighbor var: {}", e))
+                })?;
+
                 // Bias
-                let bias = Var::zeros(*hidden_dim, DType::F32, device)
-                    .map_err(|e| TensorCoreError::Tensor(format!("Failed to create layer bias: {}", e)))?;
-                
+                let bias = Var::zeros(*hidden_dim, DType::F32, device).map_err(|e| {
+                    TensorCoreError::Tensor(format!("Failed to create layer bias: {}", e))
+                })?;
+
                 layers.push((w_self, w_neighbor, bias));
                 current_dim = *hidden_dim;
             }
@@ -1315,12 +1419,17 @@ fn compile_predicate_from_spec(
             // Output projection: hidden_dim → 1
             let output_scale = (2.0f32 / (*hidden_dim + 1) as f32).sqrt();
             let output_w = Var::from_tensor(
-                &Tensor::randn(0.0f32, output_scale, (*hidden_dim, 1), device)
-                    .map_err(|e| TensorCoreError::Tensor(format!("Failed to create output_w: {}", e)))?,
-            ).map_err(|e| TensorCoreError::Tensor(format!("Failed to create output_w var: {}", e)))?;
-            
-            let output_b = Var::zeros(1, DType::F32, device)
-                .map_err(|e| TensorCoreError::Tensor(format!("Failed to create output_b: {}", e)))?;
+                &Tensor::randn(0.0f32, output_scale, (*hidden_dim, 1), device).map_err(|e| {
+                    TensorCoreError::Tensor(format!("Failed to create output_w: {}", e))
+                })?,
+            )
+            .map_err(|e| {
+                TensorCoreError::Tensor(format!("Failed to create output_w var: {}", e))
+            })?;
+
+            let output_b = Var::zeros(1, DType::F32, device).map_err(|e| {
+                TensorCoreError::Tensor(format!("Failed to create output_b: {}", e))
+            })?;
 
             Ok(CompiledPredicate::GraphNeural {
                 node_features_name: node_features.clone(),
@@ -1339,44 +1448,39 @@ fn compile_predicate_from_spec(
         PredicateSpec::Composite { .. } => {
             // For now, composite predicates are handled by defining them as rules
             Err(TensorCoreError::Compiler(
-                "Composite predicates not yet implemented directly. Define as rules instead.".into(),
+                "Composite predicates not yet implemented directly. Define as rules instead."
+                    .into(),
             ))
         }
 
-        PredicateSpec::TierLookup { .. } => {
-            Err(TensorCoreError::Compiler(
-                "TierLookup predicates not yet implemented in codegen.".into(),
-            ))
-        }
+        PredicateSpec::TierLookup { .. } => Err(TensorCoreError::Compiler(
+            "TierLookup predicates not yet implemented in codegen.".into(),
+        )),
 
-        PredicateSpec::PairwiseDifference { .. } => {
-            Err(TensorCoreError::Compiler(
-                "PairwiseDifference predicates not yet implemented in codegen.".into(),
-            ))
-        }
+        PredicateSpec::PairwiseDifference { .. } => Err(TensorCoreError::Compiler(
+            "PairwiseDifference predicates not yet implemented in codegen.".into(),
+        )),
 
-        PredicateSpec::CascadingLookup { .. } => {
-            Err(TensorCoreError::Compiler(
-                "CascadingLookup predicates not yet implemented in codegen.".into(),
-            ))
-        }
+        PredicateSpec::CascadingLookup { .. } => Err(TensorCoreError::Compiler(
+            "CascadingLookup predicates not yet implemented in codegen.".into(),
+        )),
     }
 }
 
 /// Extract rule weights from the source specification
-/// 
+///
 /// If rules have explicit weights defined, normalize them to sum to 1.0.
 /// Returns None if no weights are defined.
 fn extract_rule_weights(spec: &RuleSpec) -> Option<Vec<f32>> {
     let weights: Vec<f32> = spec.rules.iter().map(|r| r.weight.unwrap_or(1.0)).collect();
-    
+
     // Check if any non-default weights are defined
     let has_custom_weights = spec.rules.iter().any(|r| r.weight.is_some());
-    
+
     if !has_custom_weights {
         return None;
     }
-    
+
     // Normalize weights to sum to 1.0
     let sum: f32 = weights.iter().sum();
     if sum > 0.0 {
@@ -1410,7 +1514,10 @@ fn generate_explanation(
     ));
 
     // Detail the predicates in the best rule
-    if let Some(body) = bodies.iter().find(|b| format!("rule_{}", b.rule_idx) == best_rule) {
+    if let Some(body) = bodies
+        .iter()
+        .find(|b| format!("rule_{}", b.rule_idx) == best_rule)
+    {
         lines.push("  Contributing predicates:".to_string());
         for lit in &body.literals {
             if let Some(&activation) = predicate_activations.get(&lit.predicate_name) {
@@ -1453,10 +1560,14 @@ mod tests {
 
     #[test]
     fn test_compile_multiple_rules() {
-        let spec = parse_rules("test", r#"
+        let spec = parse_rules(
+            "test",
+            r#"
             exit(X) :- profit(X), momentum(X).
             exit(X) :- stop_loss(X).
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
 
         let compiled = CompiledRuleSet::compile(spec, &test_device()).unwrap();
 
@@ -1516,10 +1627,14 @@ mod tests {
 
     #[test]
     fn test_forward_multiple_rules() {
-        let spec = parse_rules("test", r#"
+        let spec = parse_rules(
+            "test",
+            r#"
             exit(X) :- profit(X).
             exit(X) :- stop_loss(X).
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
         let compiled = CompiledRuleSet::compile(spec, &test_device()).unwrap();
 
         let mut inputs = HashMap::new();
@@ -1564,7 +1679,7 @@ mod tests {
     #[test]
     fn test_compile_with_threshold_spec() {
         let mut spec = parse_rules("test", "exit(X) :- profit_target(X).").unwrap();
-        
+
         // Add predicate specification
         spec.add_predicate(
             "profit_target",
@@ -1594,11 +1709,8 @@ mod tests {
     #[test]
     fn test_param_count() {
         let mut spec = parse_rules("test", "exit(X) :- momentum(X).").unwrap();
-        
-        spec.add_predicate(
-            "momentum",
-            PredicateSpec::Learned { dim: 10 },
-        );
+
+        spec.add_predicate("momentum", PredicateSpec::Learned { dim: 10 });
 
         let compiled = CompiledRuleSet::compile(spec, &test_device()).unwrap();
 
@@ -1609,11 +1721,8 @@ mod tests {
     #[test]
     fn test_trainable_vars() {
         let mut spec = parse_rules("test", "exit(X) :- momentum(X).").unwrap();
-        
-        spec.add_predicate(
-            "momentum",
-            PredicateSpec::Learned { dim: 10 },
-        );
+
+        spec.add_predicate("momentum", PredicateSpec::Learned { dim: 10 });
 
         let compiled = CompiledRuleSet::compile(spec, &test_device()).unwrap();
         let vars = compiled.trainable_vars();
@@ -1628,9 +1737,9 @@ mod tests {
     #[test]
     fn test_learned_projection_compile() {
         use super::super::Activation;
-        
+
         let mut spec = parse_rules("test", "high_intent(X) :- intent_score(X).").unwrap();
-        
+
         spec.add_predicate(
             "intent_score",
             PredicateSpec::LearnedProjection {
@@ -1642,12 +1751,15 @@ mod tests {
                 attention_dropout: None,
                 layer_norm: None,
                 dropout: None,
-                residual: None, conditioning_dim: None, conditioning_type: None, film_identity_init: None,
+                residual: None,
+                conditioning_dim: None,
+                conditioning_type: None,
+                film_identity_init: None,
             },
         );
 
         let compiled = CompiledRuleSet::compile(spec, &test_device()).unwrap();
-        
+
         // Parameters: w1(128x32) + b1(32) + w2(32x1) + b2(1) = 4096 + 32 + 32 + 1 = 4161
         assert_eq!(compiled.param_count(), 4161);
         assert_eq!(compiled.trainable_vars().len(), 4);
@@ -1656,9 +1768,9 @@ mod tests {
     #[test]
     fn test_learned_projection_forward() {
         use super::super::Activation;
-        
+
         let mut spec = parse_rules("test", "high_intent(X) :- intent_score(X).").unwrap();
-        
+
         spec.add_predicate(
             "intent_score",
             PredicateSpec::LearnedProjection {
@@ -1670,7 +1782,10 @@ mod tests {
                 attention_dropout: None,
                 layer_norm: None,
                 dropout: None,
-                residual: None, conditioning_dim: None, conditioning_type: None, film_identity_init: None,
+                residual: None,
+                conditioning_dim: None,
+                conditioning_type: None,
+                film_identity_init: None,
             },
         );
 
@@ -1683,9 +1798,14 @@ mod tests {
         );
 
         let output = compiled.forward(&inputs).unwrap();
-        
+
         // Output should be in [0, 1] (sigmoid output)
-        let result = output.output.flatten_all().unwrap().to_vec1::<f32>().unwrap()[0];
+        let result = output
+            .output
+            .flatten_all()
+            .unwrap()
+            .to_vec1::<f32>()
+            .unwrap()[0];
         assert!((0.0..=1.0).contains(&result));
         assert!(output.explanation.contains("intent_score"));
     }
@@ -1693,22 +1813,25 @@ mod tests {
     #[test]
     fn test_learned_projection_multi_input() {
         use super::super::Activation;
-        
+
         let mut spec = parse_rules("test", "match(X) :- combined_score(X).").unwrap();
-        
+
         // Concatenate code and intent embeddings
         spec.add_predicate(
             "combined_score",
             PredicateSpec::LearnedProjection {
                 inputs: vec!["code_embedding".into(), "intent_embedding".into()],
-                input_dim: 16,  // 8 + 8
+                input_dim: 16, // 8 + 8
                 hidden_dim: 4,
                 activation: Activation::GELU,
                 attention_heads: None,
                 attention_dropout: None,
                 layer_norm: None,
                 dropout: None,
-                residual: None, conditioning_dim: None, conditioning_type: None, film_identity_init: None,
+                residual: None,
+                conditioning_dim: None,
+                conditioning_type: None,
+                film_identity_init: None,
             },
         );
 
@@ -1725,7 +1848,12 @@ mod tests {
         );
 
         let output = compiled.forward(&inputs).unwrap();
-        let result = output.output.flatten_all().unwrap().to_vec1::<f32>().unwrap()[0];
+        let result = output
+            .output
+            .flatten_all()
+            .unwrap()
+            .to_vec1::<f32>()
+            .unwrap()[0];
         assert!((0.0..=1.0).contains(&result));
     }
 
@@ -1736,9 +1864,9 @@ mod tests {
     #[test]
     fn test_learned_similarity_compile() {
         use super::super::SimilarityMethod;
-        
+
         let mut spec = parse_rules("test", "similar(X) :- intent_match(X).").unwrap();
-        
+
         spec.add_predicate(
             "intent_match",
             PredicateSpec::LearnedSimilarity {
@@ -1750,7 +1878,7 @@ mod tests {
         );
 
         let compiled = CompiledRuleSet::compile(spec, &test_device()).unwrap();
-        
+
         // Learned similarity: weights(64x1) + bias(1) = 65 params
         assert_eq!(compiled.param_count(), 65);
     }
@@ -1758,9 +1886,9 @@ mod tests {
     #[test]
     fn test_learned_similarity_forward() {
         use super::super::SimilarityMethod;
-        
+
         let mut spec = parse_rules("test", "similar(X) :- intent_match(X).").unwrap();
-        
+
         spec.add_predicate(
             "intent_match",
             PredicateSpec::LearnedSimilarity {
@@ -1784,16 +1912,21 @@ mod tests {
         );
 
         let output = compiled.forward(&inputs).unwrap();
-        let result = output.output.flatten_all().unwrap().to_vec1::<f32>().unwrap()[0];
+        let result = output
+            .output
+            .flatten_all()
+            .unwrap()
+            .to_vec1::<f32>()
+            .unwrap()[0];
         assert!((0.0..=1.0).contains(&result));
     }
 
     #[test]
     fn test_cosine_similarity() {
         use super::super::SimilarityMethod;
-        
+
         let mut spec = parse_rules("test", "similar(X) :- cosine_match(X).").unwrap();
-        
+
         spec.add_predicate(
             "cosine_match",
             PredicateSpec::LearnedSimilarity {
@@ -1805,7 +1938,7 @@ mod tests {
         );
 
         let compiled = CompiledRuleSet::compile(spec, &test_device()).unwrap();
-        
+
         // Cosine similarity has no learnable parameters
         assert_eq!(compiled.param_count(), 0);
 
@@ -1817,8 +1950,13 @@ mod tests {
 
         let output = compiled.forward(&inputs).unwrap();
         // Output is 2D [batch, 1], flatten to get scalar
-        let result = output.output.flatten_all().unwrap().to_vec1::<f32>().unwrap()[0];
-        
+        let result = output
+            .output
+            .flatten_all()
+            .unwrap()
+            .to_vec1::<f32>()
+            .unwrap()[0];
+
         // Cosine of identical vectors = 1.0, mapped to [0,1] = 1.0
         assert!((result - 1.0).abs() < 0.01);
     }
@@ -1826,9 +1964,9 @@ mod tests {
     #[test]
     fn test_bilinear_similarity() {
         use super::super::SimilarityMethod;
-        
+
         let mut spec = parse_rules("test", "similar(X) :- bilinear_match(X).").unwrap();
-        
+
         spec.add_predicate(
             "bilinear_match",
             PredicateSpec::LearnedSimilarity {
@@ -1840,7 +1978,7 @@ mod tests {
         );
 
         let compiled = CompiledRuleSet::compile(spec, &test_device()).unwrap();
-        
+
         // Bilinear: W(8x8) + bias(1) = 64 + 1 = 65 params
         assert_eq!(compiled.param_count(), 65);
 
@@ -1855,7 +1993,12 @@ mod tests {
         );
 
         let output = compiled.forward(&inputs).unwrap();
-        let result = output.output.flatten_all().unwrap().to_vec1::<f32>().unwrap()[0];
+        let result = output
+            .output
+            .flatten_all()
+            .unwrap()
+            .to_vec1::<f32>()
+            .unwrap()[0];
         assert!((0.0..=1.0).contains(&result));
     }
 
@@ -1866,9 +2009,9 @@ mod tests {
     #[test]
     fn test_graph_neural_compile() {
         use super::super::Aggregation;
-        
+
         let mut spec = parse_rules("test", "anomaly(X) :- gnn_score(X).").unwrap();
-        
+
         spec.add_predicate(
             "gnn_score",
             PredicateSpec::GraphNeural {
@@ -1882,7 +2025,7 @@ mod tests {
         );
 
         let compiled = CompiledRuleSet::compile(spec, &test_device()).unwrap();
-        
+
         // Layer 1: w_self(16x8) + w_neighbor(16x8) + bias(8) = 128 + 128 + 8 = 264
         // Layer 2: w_self(8x8) + w_neighbor(8x8) + bias(8) = 64 + 64 + 8 = 136
         // Output: w(8x1) + b(1) = 8 + 1 = 9
@@ -1893,9 +2036,9 @@ mod tests {
     #[test]
     fn test_graph_neural_forward() {
         use super::super::Aggregation;
-        
+
         let mut spec = parse_rules("test", "anomaly(X) :- gnn_score(X).").unwrap();
-        
+
         spec.add_predicate(
             "gnn_score",
             PredicateSpec::GraphNeural {
@@ -1916,27 +2059,24 @@ mod tests {
             "features".to_string(),
             Tensor::randn(0.0f32, 1.0, (3, 4), &test_device()).unwrap(),
         );
-        
+
         // Simple adjacency matrix (fully connected)
         inputs.insert(
             "adj".to_string(),
             Tensor::from_vec(
-                vec![
-                    1.0f32, 1.0, 1.0,
-                    1.0, 1.0, 1.0,
-                    1.0, 1.0, 1.0,
-                ],
+                vec![1.0f32, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
                 (3, 3),
                 &test_device(),
-            ).unwrap(),
+            )
+            .unwrap(),
         );
 
         let output = compiled.forward(&inputs).unwrap();
-        
+
         // Should return per-node predictions
         let result = output.output.to_vec2::<f32>().unwrap();
-        assert_eq!(result.len(), 3);  // 3 nodes
-        
+        assert_eq!(result.len(), 3); // 3 nodes
+
         // All values should be in [0, 1]
         for row in result {
             assert!(row[0] >= 0.0 && row[0] <= 1.0);
@@ -1946,9 +2086,9 @@ mod tests {
     #[test]
     fn test_graph_neural_aggregation_sum() {
         use super::super::Aggregation;
-        
+
         let mut spec = parse_rules("test", "score(X) :- gnn(X).").unwrap();
-        
+
         spec.add_predicate(
             "gnn",
             PredicateSpec::GraphNeural {
@@ -1980,14 +2120,14 @@ mod tests {
     #[test]
     fn test_graph_neural_sparse_coo() {
         use super::super::Aggregation;
-        
+
         let mut spec = parse_rules("test", "score(X) :- gnn(X).").unwrap();
-        
+
         spec.add_predicate(
             "gnn",
             PredicateSpec::GraphNeural {
                 node_features: "features".into(),
-                adjacency: "adj".into(),  // Will be provided in sparse COO format
+                adjacency: "adj".into(), // Will be provided in sparse COO format
                 feature_dim: 4,
                 hidden_dim: 4,
                 num_layers: 1,
@@ -1999,13 +2139,13 @@ mod tests {
 
         // Create a 5-node graph with sparse edges: 0→1, 1→2, 2→3, 3→4, 4→0 (ring)
         let mut inputs = HashMap::new();
-        
+
         // Node features: [5, 4]
         inputs.insert(
             "features".to_string(),
             Tensor::randn(0.0f32, 1.0, (5, 4), &test_device()).unwrap(),
         );
-        
+
         // Sparse COO format: row_indices, col_indices, shape
         inputs.insert(
             "adj_row_indices".to_string(),
@@ -2022,24 +2162,29 @@ mod tests {
         // Note: adj_values not provided, defaults to 1.0
 
         let output = compiled.forward(&inputs).unwrap();
-        
+
         // Should return per-node predictions
         let result = output.output.to_vec2::<f32>().unwrap();
-        assert_eq!(result.len(), 5);  // 5 nodes
-        
+        assert_eq!(result.len(), 5); // 5 nodes
+
         // All values should be in [0, 1] and not NaN
         for (i, row) in result.iter().enumerate() {
             assert!(!row[0].is_nan(), "NaN at node {}", i);
-            assert!(row[0] >= 0.0 && row[0] <= 1.0, "Out of range at node {}: {}", i, row[0]);
+            assert!(
+                row[0] >= 0.0 && row[0] <= 1.0,
+                "Out of range at node {}: {}",
+                i,
+                row[0]
+            );
         }
     }
 
     #[test]
     fn test_graph_neural_sparse_coo_with_values() {
         use super::super::Aggregation;
-        
+
         let mut spec = parse_rules("test", "score(X) :- gnn(X).").unwrap();
-        
+
         spec.add_predicate(
             "gnn",
             PredicateSpec::GraphNeural {
@@ -2056,12 +2201,12 @@ mod tests {
 
         // 3-node graph with weighted edges
         let mut inputs = HashMap::new();
-        
+
         inputs.insert(
             "features".to_string(),
             Tensor::ones((3, 2), DType::F32, &test_device()).unwrap(),
         );
-        
+
         // Edges: 0→1 (weight 0.5), 0→2 (weight 1.0), 1→2 (weight 0.7)
         inputs.insert(
             "adj_row_indices".to_string(),
@@ -2087,27 +2232,23 @@ mod tests {
     #[test]
     fn test_sparse_coo_to_dense() {
         let device = test_device();
-        
+
         // Create sparse COO: 3x3 matrix with edges at (0,1), (1,2), (2,0)
         let row_indices = Tensor::from_vec(vec![0i64, 1, 2], (3,), &device).unwrap();
         let col_indices = Tensor::from_vec(vec![1i64, 2, 0], (3,), &device).unwrap();
         let values = Tensor::from_vec(vec![1.0f32, 2.0, 3.0], (3,), &device).unwrap();
-        
-        let dense = super::sparse_coo_to_dense(
-            &row_indices, 
-            &col_indices, 
-            Some(&values), 
-            (3, 3), 
-            &device
-        ).unwrap();
-        
+
+        let dense =
+            super::sparse_coo_to_dense(&row_indices, &col_indices, Some(&values), (3, 3), &device)
+                .unwrap();
+
         let result = dense.to_vec2::<f32>().unwrap();
-        
+
         // Verify structure
-        assert_eq!(result[0][1], 1.0);  // (0,1) = 1.0
-        assert_eq!(result[1][2], 2.0);  // (1,2) = 2.0
-        assert_eq!(result[2][0], 3.0);  // (2,0) = 3.0
-        
+        assert_eq!(result[0][1], 1.0); // (0,1) = 1.0
+        assert_eq!(result[1][2], 2.0); // (1,2) = 2.0
+        assert_eq!(result[2][0], 3.0); // (2,0) = 3.0
+
         // Other entries should be 0
         assert_eq!(result[0][0], 0.0);
         assert_eq!(result[1][1], 0.0);
@@ -2121,32 +2262,42 @@ mod tests {
     #[test]
     fn test_zero_mlp_pipeline_integration() {
         use super::super::SimilarityMethod;
-        
+
         // Single-head version (mixed heads will be P2)
         // Tests that LearnedSimilarity integrates with threshold predicates
-        let mut spec = parse_rules("pipeline_rules", r#"
+        let mut spec = parse_rules(
+            "pipeline_rules",
+            r#"
             escalate(X) :- high_risk(X), low_intent(X).
             escalate(X) :- security_path(X).
-        "#).unwrap();
-        
+        "#,
+        )
+        .unwrap();
+
         // Threshold predicate
-        spec.add_predicate("high_risk", PredicateSpec::Threshold {
-            input: "risk_score".into(),
-            threshold: 0.5,
-            greater_than: true,
-            sharpness: 10.0,
-        });
-        
+        spec.add_predicate(
+            "high_risk",
+            PredicateSpec::Threshold {
+                input: "risk_score".into(),
+                threshold: 0.5,
+                greater_than: true,
+                sharpness: 10.0,
+            },
+        );
+
         // Learned similarity (replaces intent_matcher MLP)
-        spec.add_predicate("low_intent", PredicateSpec::LearnedSimilarity {
-            left: "code_emb".into(),
-            right: "intent_emb".into(),
-            dim: 8,
-            method: SimilarityMethod::Learned,
-        });
+        spec.add_predicate(
+            "low_intent",
+            PredicateSpec::LearnedSimilarity {
+                left: "code_emb".into(),
+                right: "intent_emb".into(),
+                dim: 8,
+                method: SimilarityMethod::Learned,
+            },
+        );
 
         let compiled = CompiledRuleSet::compile(spec, &test_device()).unwrap();
-        
+
         // Create inputs
         let mut inputs = HashMap::new();
         inputs.insert(
@@ -2167,14 +2318,19 @@ mod tests {
         );
 
         let output = compiled.forward(&inputs).unwrap();
-        
+
         // Should produce a valid output
-        let result = output.output.flatten_all().unwrap().to_vec1::<f32>().unwrap()[0];
+        let result = output
+            .output
+            .flatten_all()
+            .unwrap()
+            .to_vec1::<f32>()
+            .unwrap()[0];
         assert!((0.0..=1.0).contains(&result));
-        
+
         // Should have trainable params from LearnedSimilarity
         assert!(compiled.param_count() > 0);
-        
+
         // Explanation should reference predicates
         assert!(output.explanation.contains("escalate"));
     }
@@ -2186,9 +2342,9 @@ mod tests {
     #[test]
     fn test_learned_projection_with_layer_norm() {
         use super::super::Activation;
-        
+
         let mut spec = parse_rules("test", "score(X) :- proj(X).").unwrap();
-        
+
         spec.add_predicate(
             "proj",
             PredicateSpec::LearnedProjection {
@@ -2198,14 +2354,17 @@ mod tests {
                 activation: Activation::GELU,
                 attention_heads: None,
                 attention_dropout: None,
-                layer_norm: Some(true),  // Enable LayerNorm
+                layer_norm: Some(true), // Enable LayerNorm
                 dropout: None,
-                residual: None, conditioning_dim: None, conditioning_type: None, film_identity_init: None,
+                residual: None,
+                conditioning_dim: None,
+                conditioning_type: None,
+                film_identity_init: None,
             },
         );
 
         let compiled = CompiledRuleSet::compile(spec, &test_device()).unwrap();
-        
+
         // LayerNorm adds gamma(8) + beta(8) = 16 extra params
         // Base: w1(8x8) + b1(8) + w2(8x1) + b2(1) = 64 + 8 + 8 + 1 = 81
         // Total: 81 + 16 = 97
@@ -2218,16 +2377,21 @@ mod tests {
         );
 
         let output = compiled.forward(&inputs).unwrap();
-        let result = output.output.flatten_all().unwrap().to_vec1::<f32>().unwrap()[0];
+        let result = output
+            .output
+            .flatten_all()
+            .unwrap()
+            .to_vec1::<f32>()
+            .unwrap()[0];
         assert!((0.0..=1.0).contains(&result));
     }
 
     #[test]
     fn test_learned_projection_with_dropout() {
         use super::super::Activation;
-        
+
         let mut spec = parse_rules("test", "score(X) :- proj(X).").unwrap();
-        
+
         spec.add_predicate(
             "proj",
             PredicateSpec::LearnedProjection {
@@ -2238,8 +2402,11 @@ mod tests {
                 attention_heads: None,
                 attention_dropout: None,
                 layer_norm: None,
-                dropout: Some(0.3),  // 30% dropout
-                residual: None, conditioning_dim: None, conditioning_type: None, film_identity_init: None,
+                dropout: Some(0.3), // 30% dropout
+                residual: None,
+                conditioning_dim: None,
+                conditioning_type: None,
+                film_identity_init: None,
             },
         );
 
@@ -2252,28 +2419,33 @@ mod tests {
         );
 
         let output = compiled.forward(&inputs).unwrap();
-        let result = output.output.flatten_all().unwrap().to_vec1::<f32>().unwrap()[0];
+        let result = output
+            .output
+            .flatten_all()
+            .unwrap()
+            .to_vec1::<f32>()
+            .unwrap()[0];
         assert!((0.0..=1.0).contains(&result));
     }
 
     #[test]
     fn test_learned_projection_with_residual() {
         use super::super::Activation;
-        
+
         let mut spec = parse_rules("test", "score(X) :- proj(X).").unwrap();
-        
+
         spec.add_predicate(
             "proj",
             PredicateSpec::LearnedProjection {
                 inputs: vec!["embedding".into()],
                 input_dim: 8,
-                hidden_dim: 8,  // Same as input_dim, no projection needed
+                hidden_dim: 8, // Same as input_dim, no projection needed
                 activation: Activation::GELU,
                 attention_heads: None,
                 attention_dropout: None,
                 layer_norm: None,
                 dropout: None,
-                residual: Some(true),  // Enable residual connection
+                residual: Some(true), // Enable residual connection
                 conditioning_dim: None,
                 conditioning_type: None,
                 film_identity_init: None,
@@ -2289,28 +2461,33 @@ mod tests {
         );
 
         let output = compiled.forward(&inputs).unwrap();
-        let result = output.output.flatten_all().unwrap().to_vec1::<f32>().unwrap()[0];
+        let result = output
+            .output
+            .flatten_all()
+            .unwrap()
+            .to_vec1::<f32>()
+            .unwrap()[0];
         assert!((0.0..=1.0).contains(&result));
     }
 
     #[test]
     fn test_learned_projection_with_residual_projection() {
         use super::super::Activation;
-        
+
         let mut spec = parse_rules("test", "score(X) :- proj(X).").unwrap();
-        
+
         spec.add_predicate(
             "proj",
             PredicateSpec::LearnedProjection {
                 inputs: vec!["embedding".into()],
                 input_dim: 8,
-                hidden_dim: 16,  // Different from input_dim, needs projection
+                hidden_dim: 16, // Different from input_dim, needs projection
                 activation: Activation::GELU,
                 attention_heads: None,
                 attention_dropout: None,
                 layer_norm: None,
                 dropout: None,
-                residual: Some(true),  // Enable residual with projection
+                residual: Some(true), // Enable residual with projection
                 conditioning_dim: None,
                 conditioning_type: None,
                 film_identity_init: None,
@@ -2318,7 +2495,7 @@ mod tests {
         );
 
         let compiled = CompiledRuleSet::compile(spec, &test_device()).unwrap();
-        
+
         // Base: w1(8x16) + b1(16) + w2(16x1) + b2(1) = 128 + 16 + 16 + 1 = 161
         // Residual projection: (8x16) = 128
         // Total: 161 + 128 = 289
@@ -2331,33 +2508,41 @@ mod tests {
         );
 
         let output = compiled.forward(&inputs).unwrap();
-        let result = output.output.flatten_all().unwrap().to_vec1::<f32>().unwrap()[0];
+        let result = output
+            .output
+            .flatten_all()
+            .unwrap()
+            .to_vec1::<f32>()
+            .unwrap()[0];
         assert!((0.0..=1.0).contains(&result));
     }
 
     #[test]
     fn test_learned_projection_with_attention() {
         use super::super::Activation;
-        
+
         let mut spec = parse_rules("test", "score(X) :- proj(X).").unwrap();
-        
+
         spec.add_predicate(
             "proj",
             PredicateSpec::LearnedProjection {
                 inputs: vec!["embedding".into()],
                 input_dim: 8,
-                hidden_dim: 8,  // Must be divisible by num_heads
+                hidden_dim: 8, // Must be divisible by num_heads
                 activation: Activation::GELU,
-                attention_heads: Some(2),  // 2 attention heads
+                attention_heads: Some(2), // 2 attention heads
                 attention_dropout: Some(0.1),
                 layer_norm: Some(true),
                 dropout: None,
-                residual: None, conditioning_dim: None, conditioning_type: None, film_identity_init: None,
+                residual: None,
+                conditioning_dim: None,
+                conditioning_type: None,
+                film_identity_init: None,
             },
         );
 
         let compiled = CompiledRuleSet::compile(spec, &test_device()).unwrap();
-        
+
         // Base: w1(8x8) + b1(8) + w2(8x1) + b2(1) = 64 + 8 + 8 + 1 = 81
         // LayerNorm 1: gamma(8) + beta(8) = 16
         // Attention: Wq(8x8) + Wk(8x8) + Wv(8x8) + Wo(8x8) = 4 * 64 = 256
@@ -2372,17 +2557,22 @@ mod tests {
         );
 
         let output = compiled.forward(&inputs).unwrap();
-        let result = output.output.flatten_all().unwrap().to_vec1::<f32>().unwrap()[0];
+        let result = output
+            .output
+            .flatten_all()
+            .unwrap()
+            .to_vec1::<f32>()
+            .unwrap()[0];
         assert!((0.0..=1.0).contains(&result));
     }
 
     #[test]
     fn test_learned_projection_full_transformer_style() {
         use super::super::Activation;
-        
+
         // Full transformer-style block: LayerNorm + Attention + Dropout + Residual
         let mut spec = parse_rules("test", "score(X) :- proj(X).").unwrap();
-        
+
         spec.add_predicate(
             "proj",
             PredicateSpec::LearnedProjection {
@@ -2390,16 +2580,19 @@ mod tests {
                 input_dim: 16,
                 hidden_dim: 16,
                 activation: Activation::GELU,
-                attention_heads: Some(4),  // 4-head attention
+                attention_heads: Some(4), // 4-head attention
                 attention_dropout: Some(0.1),
                 layer_norm: Some(true),
                 dropout: Some(0.1),
-                residual: Some(true), conditioning_dim: None, conditioning_type: None, film_identity_init: None,
+                residual: Some(true),
+                conditioning_dim: None,
+                conditioning_type: None,
+                film_identity_init: None,
             },
         );
 
         let compiled = CompiledRuleSet::compile(spec, &test_device()).unwrap();
-        
+
         // Should have significant params from attention
         assert!(compiled.param_count() > 1000);
 
@@ -2410,16 +2603,21 @@ mod tests {
         );
 
         let output = compiled.forward(&inputs).unwrap();
-        let result = output.output.flatten_all().unwrap().to_vec1::<f32>().unwrap()[0];
+        let result = output
+            .output
+            .flatten_all()
+            .unwrap()
+            .to_vec1::<f32>()
+            .unwrap()[0];
         assert!((0.0..=1.0).contains(&result));
     }
 
     #[test]
     fn test_learned_projection_batch_input() {
         use super::super::Activation;
-        
+
         let mut spec = parse_rules("test", "score(X) :- proj(X).").unwrap();
-        
+
         spec.add_predicate(
             "proj",
             PredicateSpec::LearnedProjection {
@@ -2431,7 +2629,10 @@ mod tests {
                 attention_dropout: None,
                 layer_norm: Some(true),
                 dropout: Some(0.1),
-                residual: Some(true), conditioning_dim: None, conditioning_type: None, film_identity_init: None,
+                residual: Some(true),
+                conditioning_dim: None,
+                conditioning_type: None,
+                film_identity_init: None,
             },
         );
 
@@ -2445,8 +2646,13 @@ mod tests {
         );
 
         let output = compiled.forward(&inputs).unwrap();
-        let results = output.output.flatten_all().unwrap().to_vec1::<f32>().unwrap();
-        
+        let results = output
+            .output
+            .flatten_all()
+            .unwrap()
+            .to_vec1::<f32>()
+            .unwrap();
+
         assert_eq!(results.len(), 4);
         for result in results {
             assert!((0.0..=1.0).contains(&result));
@@ -2456,11 +2662,11 @@ mod tests {
     #[test]
     fn test_attention_params_creation() {
         let params = AttentionParams::new(16, 4, &test_device()).unwrap();
-        
+
         assert_eq!(params.num_heads, 4);
         assert_eq!(params.head_dim, 4);
         assert_eq!(params.trainable_vars().len(), 4);
-        
+
         // 4 * (16x16) = 1024 params
         assert_eq!(params.param_count(), 1024);
     }
@@ -2477,9 +2683,9 @@ mod tests {
         // Regression test for NaN bug reported by org-lttr
         // Config: 18 features, 128 hidden, 4 attention heads
         use super::super::Activation;
-        
+
         let mut spec = parse_rules("test", "exit(X) :- exit_signal(X).").unwrap();
-        
+
         spec.add_predicate(
             "exit_signal",
             PredicateSpec::LearnedProjection {
@@ -2491,7 +2697,10 @@ mod tests {
                 attention_dropout: Some(0.1),
                 layer_norm: Some(true),
                 dropout: Some(0.3),
-                residual: Some(true), conditioning_dim: None, conditioning_type: None, film_identity_init: None,
+                residual: Some(true),
+                conditioning_dim: None,
+                conditioning_type: None,
+                film_identity_init: None,
             },
         );
 
@@ -2505,21 +2714,31 @@ mod tests {
         );
 
         let output = compiled.forward(&inputs).unwrap();
-        let results = output.output.flatten_all().unwrap().to_vec1::<f32>().unwrap();
-        
+        let results = output
+            .output
+            .flatten_all()
+            .unwrap()
+            .to_vec1::<f32>()
+            .unwrap();
+
         // Check no NaN values
         for (i, result) in results.iter().enumerate() {
             assert!(!result.is_nan(), "NaN at index {}", i);
             assert!(!result.is_infinite(), "Infinite at index {}", i);
-            assert!(*result >= 0.0 && *result <= 1.0, 
-                    "Out of range at index {}: {}", i, result);
+            assert!(
+                *result >= 0.0 && *result <= 1.0,
+                "Out of range at index {}: {}",
+                i,
+                result
+            );
         }
-        
+
         // Check reasonable variance (not collapsed)
         let mean: f32 = results.iter().sum::<f32>() / results.len() as f32;
-        let variance: f32 = results.iter().map(|x| (x - mean).powi(2)).sum::<f32>() / results.len() as f32;
+        let variance: f32 =
+            results.iter().map(|x| (x - mean).powi(2)).sum::<f32>() / results.len() as f32;
         let std = variance.sqrt();
-        
+
         // Std should be > 0.01 (not collapsed to single value)
         assert!(std > 0.001, "Predictions collapsed: std={}", std);
     }
@@ -2528,9 +2747,9 @@ mod tests {
     fn test_attention_with_extreme_inputs() {
         // Test that attention handles extreme input values without NaN
         use super::super::Activation;
-        
+
         let mut spec = parse_rules("test", "score(X) :- proj(X).").unwrap();
-        
+
         spec.add_predicate(
             "proj",
             PredicateSpec::LearnedProjection {
@@ -2542,7 +2761,10 @@ mod tests {
                 attention_dropout: None,
                 layer_norm: Some(true),
                 dropout: None,
-                residual: Some(true), conditioning_dim: None, conditioning_type: None, film_identity_init: None,
+                residual: Some(true),
+                conditioning_dim: None,
+                conditioning_type: None,
+                film_identity_init: None,
             },
         );
 
@@ -2554,20 +2776,30 @@ mod tests {
             "features".to_string(),
             Tensor::from_vec(
                 vec![
-                    100.0f32, -100.0, 0.0, 50.0, -50.0, 1e6, -1e6, 0.0,  // Row 1: extreme
-                    0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,              // Row 2: all zeros
+                    100.0f32, -100.0, 0.0, 50.0, -50.0, 1e6, -1e6, 0.0, // Row 1: extreme
+                    0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, // Row 2: all zeros
                 ],
                 (2, 8),
                 &test_device(),
-            ).unwrap(),
+            )
+            .unwrap(),
         );
 
         let output = compiled.forward(&inputs).unwrap();
-        let results = output.output.flatten_all().unwrap().to_vec1::<f32>().unwrap();
-        
+        let results = output
+            .output
+            .flatten_all()
+            .unwrap()
+            .to_vec1::<f32>()
+            .unwrap();
+
         for (i, result) in results.iter().enumerate() {
             assert!(!result.is_nan(), "NaN at index {} with extreme inputs", i);
-            assert!(!result.is_infinite(), "Infinite at index {} with extreme inputs", i);
+            assert!(
+                !result.is_infinite(),
+                "Infinite at index {} with extreme inputs",
+                i
+            );
         }
     }
 
@@ -2576,10 +2808,10 @@ mod tests {
         // Regression test: NaN after first backward + step
         // This was the org-lttr training bug
         use super::super::Activation;
-        use candle_nn::optim::{SGD, Optimizer};
-        
+        use candle_nn::optim::{Optimizer, SGD};
+
         let mut spec = parse_rules("test", "exit(X) :- exit_signal(X).").unwrap();
-        
+
         spec.add_predicate(
             "exit_signal",
             PredicateSpec::LearnedProjection {
@@ -2591,7 +2823,10 @@ mod tests {
                 attention_dropout: Some(0.1),
                 layer_norm: Some(true),
                 dropout: Some(0.3),
-                residual: Some(true), conditioning_dim: None, conditioning_type: None, film_identity_init: None,
+                residual: Some(true),
+                conditioning_dim: None,
+                conditioning_type: None,
+                film_identity_init: None,
             },
         );
 
@@ -2606,64 +2841,82 @@ mod tests {
                 "features".to_string(),
                 Tensor::randn(0.0f32, 1.0, (10, 18), &test_device()).unwrap(),
             );
-            
+
             // Forward pass
             let output = compiled.forward(&inputs).unwrap();
             let predictions = output.output;
-            
+
             // Check forward didn't produce NaN
             let pred_vals = predictions.flatten_all().unwrap().to_vec1::<f32>().unwrap();
             for (i, v) in pred_vals.iter().enumerate() {
-                assert!(!v.is_nan(), "NaN in forward at epoch {} sample {}", epoch, i);
-                assert!(!v.is_infinite(), "Inf in forward at epoch {} sample {}", epoch, i);
+                assert!(
+                    !v.is_nan(),
+                    "NaN in forward at epoch {} sample {}",
+                    epoch,
+                    i
+                );
+                assert!(
+                    !v.is_infinite(),
+                    "Inf in forward at epoch {} sample {}",
+                    epoch,
+                    i
+                );
             }
-            
+
             // Create target and compute simple MSE loss
-            let target = Tensor::from_vec(
-                vec![0.5f32; 10],
-                (10,),
-                &test_device(),
-            ).unwrap();
-            
+            let target = Tensor::from_vec(vec![0.5f32; 10], (10,), &test_device()).unwrap();
+
             let diff = (&predictions - &target).unwrap();
             let loss = diff.sqr().unwrap().mean_all().unwrap();
-            
+
             // Backward pass
             let grads = loss.backward().unwrap();
-            
+
             // Step
             optimizer.step(&grads).unwrap();
-            
+
             // Clamp attention weights to prevent explosion
             compiled.clamp_attention_weights(10.0).unwrap();
-            
+
             // Check weights are still healthy
-            assert!(compiled.check_weights_health().is_none(), 
-                    "Weights unhealthy after epoch {}", epoch);
+            assert!(
+                compiled.check_weights_health().is_none(),
+                "Weights unhealthy after epoch {}",
+                epoch
+            );
         }
-        
+
         // Final forward pass should still work
         let mut inputs = HashMap::new();
         inputs.insert(
             "features".to_string(),
             Tensor::randn(0.0f32, 1.0, (10, 18), &test_device()).unwrap(),
         );
-        
+
         let output = compiled.forward(&inputs).unwrap();
-        let final_preds = output.output.flatten_all().unwrap().to_vec1::<f32>().unwrap();
-        
+        let final_preds = output
+            .output
+            .flatten_all()
+            .unwrap()
+            .to_vec1::<f32>()
+            .unwrap();
+
         for (i, v) in final_preds.iter().enumerate() {
             assert!(!v.is_nan(), "NaN in final forward at sample {}", i);
-            assert!(*v >= 0.0 && *v <= 1.0, "Out of range in final forward: {}", v);
+            assert!(
+                *v >= 0.0 && *v <= 1.0,
+                "Out of range in final forward: {}",
+                v
+            );
         }
     }
 
     #[test]
     fn test_clamp_attention_weights() {
         use super::super::Activation;
-        
+
         let mut spec = parse_rules("test", "score(X) :- proj(X).").unwrap();
-        
+
         spec.add_predicate(
             "proj",
             PredicateSpec::LearnedProjection {
@@ -2675,29 +2928,32 @@ mod tests {
                 attention_dropout: None,
                 layer_norm: None,
                 dropout: None,
-                residual: None, conditioning_dim: None, conditioning_type: None, film_identity_init: None,
+                residual: None,
+                conditioning_dim: None,
+                conditioning_type: None,
+                film_identity_init: None,
             },
         );
 
         let compiled = CompiledRuleSet::compile(spec, &test_device()).unwrap();
-        
+
         // Should not error
         compiled.clamp_attention_weights(10.0).unwrap();
-        
+
         // Weights should be healthy
         assert!(compiled.check_weights_health().is_none());
     }
-    
+
     #[test]
     fn test_attention_auto_clamp_no_manual_intervention() {
         // Regression test: Training with attention should work WITHOUT manual clamp_attention_weights()
         // This was the org-lttr bug - NaN after first backward + step when not calling clamp.
         // The fix: auto-clamp weights during forward pass in apply_multi_head_attention().
         use super::super::Activation;
-        use candle_nn::optim::{SGD, Optimizer};
-        
+        use candle_nn::optim::{Optimizer, SGD};
+
         let mut spec = parse_rules("test", "exit(X) :- exit_signal(X).").unwrap();
-        
+
         spec.add_predicate(
             "exit_signal",
             PredicateSpec::LearnedProjection {
@@ -2709,9 +2965,9 @@ mod tests {
                 attention_dropout: Some(0.1),
                 layer_norm: Some(true),
                 dropout: Some(0.3),
-                residual: Some(true), 
-                conditioning_dim: None, 
-                conditioning_type: None, 
+                residual: Some(true),
+                conditioning_dim: None,
+                conditioning_type: None,
                 film_identity_init: None,
             },
         );
@@ -2727,61 +2983,80 @@ mod tests {
                 "features".to_string(),
                 Tensor::randn(0.0f32, 1.0, (10, 18), &test_device()).unwrap(),
             );
-            
+
             // Forward pass
             let output = compiled.forward(&inputs).unwrap();
             let predictions = output.output;
-            
+
             // Check forward didn't produce NaN
             let pred_vals = predictions.flatten_all().unwrap().to_vec1::<f32>().unwrap();
             for (i, v) in pred_vals.iter().enumerate() {
-                assert!(!v.is_nan(), "NaN in forward at epoch {} sample {} (auto-clamp should prevent this)", epoch, i);
-                assert!(!v.is_infinite(), "Inf in forward at epoch {} sample {}", epoch, i);
+                assert!(
+                    !v.is_nan(),
+                    "NaN in forward at epoch {} sample {} (auto-clamp should prevent this)",
+                    epoch,
+                    i
+                );
+                assert!(
+                    !v.is_infinite(),
+                    "Inf in forward at epoch {} sample {}",
+                    epoch,
+                    i
+                );
             }
-            
+
             // Create target and compute simple MSE loss
-            let target = Tensor::from_vec(
-                vec![0.5f32; 10],
-                (10,),
-                &test_device(),
-            ).unwrap();
-            
+            let target = Tensor::from_vec(vec![0.5f32; 10], (10,), &test_device()).unwrap();
+
             let diff = (&predictions - &target).unwrap();
             let loss = diff.sqr().unwrap().mean_all().unwrap();
-            
+
             // Backward pass
             let grads = loss.backward().unwrap();
-            
+
             // Step - NO MANUAL CLAMPING! Auto-clamp in forward should handle this.
             optimizer.step(&grads).unwrap();
-            
+
             // NOTE: We intentionally do NOT call clamp_attention_weights() here.
             // The auto-clamp during forward pass should handle weight explosion.
         }
-        
+
         // Final forward pass should still work
         let mut inputs = HashMap::new();
         inputs.insert(
             "features".to_string(),
             Tensor::randn(0.0f32, 1.0, (10, 18), &test_device()).unwrap(),
         );
-        
+
         let output = compiled.forward(&inputs).unwrap();
-        let final_preds = output.output.flatten_all().unwrap().to_vec1::<f32>().unwrap();
-        
+        let final_preds = output
+            .output
+            .flatten_all()
+            .unwrap()
+            .to_vec1::<f32>()
+            .unwrap();
+
         for (i, v) in final_preds.iter().enumerate() {
-            assert!(!v.is_nan(), "NaN in final forward at sample {} (auto-clamp failed)", i);
-            assert!(*v >= 0.0 && *v <= 1.0, "Out of range in final forward: {}", v);
+            assert!(
+                !v.is_nan(),
+                "NaN in final forward at sample {} (auto-clamp failed)",
+                i
+            );
+            assert!(
+                *v >= 0.0 && *v <= 1.0,
+                "Out of range in final forward: {}",
+                v
+            );
         }
     }
-    
+
     #[test]
     fn test_all_feature_combinations_no_nan() {
         // Comprehensive test: all combinations of attention, layer_norm, dropout, residual
         // This tests the auto-clamp fixes for all trainable weights.
         use super::super::Activation;
-        use candle_nn::optim::{SGD, Optimizer};
-        
+        use candle_nn::optim::{Optimizer, SGD};
+
         let configs = vec![
             // (name, attention, layer_norm, dropout, residual)
             ("attention_only", Some(4), None, None, None),
@@ -2794,14 +3069,26 @@ mod tests {
             ("layernorm+dropout", None, Some(true), Some(0.2), None),
             ("layernorm+residual", None, Some(true), None, Some(true)),
             ("dropout+residual", None, None, Some(0.2), Some(true)),
-            ("attention+layernorm+dropout", Some(4), Some(true), Some(0.2), None),
-            ("attention+layernorm+residual", Some(4), Some(true), None, Some(true)),
+            (
+                "attention+layernorm+dropout",
+                Some(4),
+                Some(true),
+                Some(0.2),
+                None,
+            ),
+            (
+                "attention+layernorm+residual",
+                Some(4),
+                Some(true),
+                None,
+                Some(true),
+            ),
             ("all_features", Some(4), Some(true), Some(0.2), Some(true)),
         ];
-        
+
         for (name, attn, ln, drop, res) in configs {
             let mut spec = parse_rules(&format!("test_{}", name), "exit(X) :- signal(X).").unwrap();
-            
+
             spec.add_predicate(
                 "signal",
                 PredicateSpec::LearnedProjection {
@@ -2831,37 +3118,40 @@ mod tests {
                     "features".to_string(),
                     Tensor::randn(0.0f32, 1.0, (10, 18), &test_device()).unwrap(),
                 );
-                
+
                 let output = compiled.forward(&inputs).unwrap();
                 let predictions = output.output;
-                
+
                 // Check for NaN
                 let pred_vals = predictions.flatten_all().unwrap().to_vec1::<f32>().unwrap();
                 for (i, v) in pred_vals.iter().enumerate() {
                     assert!(
                         !v.is_nan() && v.is_finite(),
                         "{}: NaN/Inf at epoch {} sample {} (pred={})",
-                        name, epoch, i, v
+                        name,
+                        epoch,
+                        i,
+                        v
                     );
                 }
-                
+
                 let target = Tensor::from_vec(vec![0.5f32; 10], (10,), &test_device()).unwrap();
                 let diff = (&predictions - &target).unwrap();
                 let loss = diff.sqr().unwrap().mean_all().unwrap();
-                
+
                 let grads = loss.backward().unwrap();
                 optimizer.step(&grads).unwrap();
                 // NOTE: No manual clamp_attention_weights() - auto-clamp should handle it
             }
         }
     }
-    
+
     #[test]
     fn test_forward_fast_matches_forward() {
         use super::super::Activation;
-        
+
         let mut spec = parse_rules("test", "score(X) :- proj(X).").unwrap();
-        
+
         spec.add_predicate(
             "proj",
             PredicateSpec::LearnedProjection {
@@ -2873,9 +3163,9 @@ mod tests {
                 attention_dropout: None,
                 layer_norm: Some(true),
                 dropout: None,
-                residual: Some(true), 
-                conditioning_dim: None, 
-                conditioning_type: None, 
+                residual: Some(true),
+                conditioning_dim: None,
+                conditioning_type: None,
                 film_identity_init: None,
             },
         );
@@ -2891,29 +3181,37 @@ mod tests {
 
         // forward() - full output with explanation
         let full_output = compiled.forward(&inputs).unwrap();
-        
+
         // forward_fast() - just the tensor
         let fast_output = compiled.forward_fast(&inputs).unwrap();
-        
+
         // Results should match exactly
-        let full_vals = full_output.output.flatten_all().unwrap().to_vec1::<f32>().unwrap();
+        let full_vals = full_output
+            .output
+            .flatten_all()
+            .unwrap()
+            .to_vec1::<f32>()
+            .unwrap();
         let fast_vals = fast_output.flatten_all().unwrap().to_vec1::<f32>().unwrap();
-        
+
         assert_eq!(full_vals.len(), fast_vals.len());
         for (i, (full, fast)) in full_vals.iter().zip(fast_vals.iter()).enumerate() {
             assert!(
                 (full - fast).abs() < 1e-6,
-                "Mismatch at index {}: forward={}, forward_fast={}", i, full, fast
+                "Mismatch at index {}: forward={}, forward_fast={}",
+                i,
+                full,
+                fast
             );
         }
     }
-    
+
     #[test]
     fn test_forward_batch() {
         use super::super::Activation;
-        
+
         let mut spec = parse_rules("test", "score(X) :- proj(X).").unwrap();
-        
+
         spec.add_predicate(
             "proj",
             PredicateSpec::LearnedProjection {
@@ -2925,9 +3223,9 @@ mod tests {
                 attention_dropout: None,
                 layer_norm: Some(true),
                 dropout: None,
-                residual: None, 
-                conditioning_dim: None, 
-                conditioning_type: None, 
+                residual: None,
+                conditioning_dim: None,
+                conditioning_type: None,
                 film_identity_init: None,
             },
         );
@@ -2948,38 +3246,49 @@ mod tests {
 
         // Batch inference
         let batch_output = compiled.forward_batch(&batch_inputs).unwrap();
-        let batch_vals = batch_output.flatten_all().unwrap().to_vec1::<f32>().unwrap();
-        
+        let batch_vals = batch_output
+            .flatten_all()
+            .unwrap()
+            .to_vec1::<f32>()
+            .unwrap();
+
         // Individual inference for comparison
         let individual_vals: Vec<f32> = batch_inputs
             .iter()
             .map(|inputs| {
-                compiled.forward_fast(inputs).unwrap()
-                    .flatten_all().unwrap()
-                    .to_vec1::<f32>().unwrap()[0]
+                compiled
+                    .forward_fast(inputs)
+                    .unwrap()
+                    .flatten_all()
+                    .unwrap()
+                    .to_vec1::<f32>()
+                    .unwrap()[0]
             })
             .collect();
-        
+
         assert_eq!(batch_vals.len(), 5);
         assert_eq!(individual_vals.len(), 5);
-        
+
         // Results should match (with small tolerance for float ops)
         for (i, (batch, individual)) in batch_vals.iter().zip(individual_vals.iter()).enumerate() {
             assert!(
                 (batch - individual).abs() < 1e-5,
-                "Batch mismatch at index {}: batch={}, individual={}", i, batch, individual
+                "Batch mismatch at index {}: batch={}, individual={}",
+                i,
+                batch,
+                individual
             );
         }
     }
-    
+
     #[test]
     fn test_forward_fast_performance_characteristics() {
         // This test verifies the fast path is structurally simpler
         use super::super::Activation;
         use std::time::Instant;
-        
+
         let mut spec = parse_rules("test", "exit(X) :- signal(X).").unwrap();
-        
+
         spec.add_predicate(
             "signal",
             PredicateSpec::LearnedProjection {
@@ -2991,15 +3300,15 @@ mod tests {
                 attention_dropout: None,
                 layer_norm: Some(true),
                 dropout: None,
-                residual: Some(true), 
-                conditioning_dim: None, 
-                conditioning_type: None, 
+                residual: Some(true),
+                conditioning_dim: None,
+                conditioning_type: None,
                 film_identity_init: None,
             },
         );
 
         let compiled = CompiledRuleSet::compile(spec, &test_device()).unwrap();
-        
+
         // Warm up
         let mut inputs = HashMap::new();
         inputs.insert(
@@ -3007,7 +3316,7 @@ mod tests {
             Tensor::randn(0.0f32, 1.0, (1, 18), &test_device()).unwrap(),
         );
         let _ = compiled.forward_fast(&inputs).unwrap();
-        
+
         // Time many forward_fast calls
         let iterations = 100;
         let start = Instant::now();
@@ -3015,14 +3324,14 @@ mod tests {
             let _ = compiled.forward_fast(&inputs).unwrap();
         }
         let fast_duration = start.elapsed();
-        
+
         // Time many forward calls (with explanation overhead)
         let start = Instant::now();
         for _ in 0..iterations {
             let _ = compiled.forward(&inputs).unwrap();
         }
         let full_duration = start.elapsed();
-        
+
         // forward_fast should be faster (at least 1.5x typically)
         // Note: This is a soft assertion since CI performance varies
         let speedup = full_duration.as_nanos() as f64 / fast_duration.as_nanos() as f64;
@@ -3030,9 +3339,8 @@ mod tests {
             "forward_fast speedup: {:.2}x ({:?} vs {:?})",
             speedup, fast_duration, full_duration
         );
-        
+
         // Just verify it works, don't fail on speed (CI variability)
         assert!(fast_duration.as_nanos() > 0);
     }
 }
-

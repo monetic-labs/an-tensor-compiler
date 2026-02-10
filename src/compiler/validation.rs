@@ -64,7 +64,13 @@ pub fn validate(spec: &RuleSpec) -> Vec<ValidationError> {
         // Check body predicates
         for lit in &rule.body {
             check_reserved_word(&lit.predicate, rule_idx, &mut errors);
-            check_predicate_arity(&lit.predicate, lit.args.len(), &mut predicate_arities, rule_idx, &mut errors);
+            check_predicate_arity(
+                &lit.predicate,
+                lit.args.len(),
+                &mut predicate_arities,
+                rule_idx,
+                &mut errors,
+            );
         }
     }
 
@@ -82,7 +88,10 @@ pub fn validate_strict(spec: &RuleSpec) -> Result<()> {
             .map(|e| e.to_string())
             .collect::<Vec<_>>()
             .join("\n");
-        Err(TensorCoreError::Compiler(format!("Validation errors:\n{}", msg)))
+        Err(TensorCoreError::Compiler(format!(
+            "Validation errors:\n{}",
+            msg
+        )))
     }
 }
 
@@ -90,7 +99,10 @@ pub fn validate_strict(spec: &RuleSpec) -> Result<()> {
 fn check_reserved_word(name: &str, rule_idx: usize, errors: &mut Vec<ValidationError>) {
     if RESERVED_WORDS.contains(&name) {
         errors.push(ValidationError {
-            message: format!("'{}' is a reserved word and cannot be used as a predicate name", name),
+            message: format!(
+                "'{}' is a reserved word and cannot be used as a predicate name",
+                name
+            ),
             rule_index: Some(rule_idx),
             predicate: Some(name.to_string()),
             suggestion: Some(format!("Use a different name like '{}_pred'", name)),
@@ -102,7 +114,7 @@ fn check_reserved_word(name: &str, rule_idx: usize, errors: &mut Vec<ValidationE
 fn check_variable_binding(rule: &Rule, _rule_idx: usize, _errors: &mut Vec<ValidationError>) {
     // Collect variables from head (we treat head as just the predicate name for now)
     // In our AST, head is just a string - variables are in body literals that define them
-    
+
     // For now, collect all variables used in the rule
     let mut all_vars: HashSet<String> = HashSet::new();
     let mut var_first_occurrence: HashMap<String, String> = HashMap::new();
@@ -201,7 +213,9 @@ pub fn predicate_arities(spec: &RuleSpec) -> HashMap<String, usize> {
 
     for rule in &spec.rules {
         for lit in &rule.body {
-            arities.entry(lit.predicate.clone()).or_insert(lit.args.len());
+            arities
+                .entry(lit.predicate.clone())
+                .or_insert(lit.args.len());
         }
     }
 
@@ -215,10 +229,14 @@ mod tests {
 
     #[test]
     fn test_valid_spec() {
-        let spec = parse_rules("test", r#"
+        let spec = parse_rules(
+            "test",
+            r#"
             exit(X) :- profit_target(X, 0.02), momentum_shift(X).
             exit(X) :- stop_loss(X, -0.01).
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
 
         let errors = validate(&spec);
         assert!(errors.is_empty(), "Expected no errors, got: {:?}", errors);
@@ -234,10 +252,14 @@ mod tests {
 
     #[test]
     fn test_inconsistent_arity() {
-        let spec = parse_rules("test", r#"
+        let spec = parse_rules(
+            "test",
+            r#"
             exit(X) :- profit(X, 0.02).
             exit(X) :- profit(X).
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
 
         let errors = validate(&spec);
         assert!(!errors.is_empty());
@@ -246,10 +268,14 @@ mod tests {
 
     #[test]
     fn test_extract_predicates() {
-        let spec = parse_rules("test", r#"
+        let spec = parse_rules(
+            "test",
+            r#"
             exit(X) :- profit_target(X, 0.02), momentum_shift(X).
             hold(X) :- not exit(X).
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
 
         let preds = extract_predicates(&spec);
         assert!(preds.contains("exit"));
@@ -268,9 +294,13 @@ mod tests {
 
     #[test]
     fn test_predicate_arities() {
-        let spec = parse_rules("test", r#"
+        let spec = parse_rules(
+            "test",
+            r#"
             exit(X) :- profit_target(X, 0.02), momentum_shift(X).
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
 
         let arities = predicate_arities(&spec);
         assert_eq!(arities.get("profit_target"), Some(&2));
@@ -289,4 +319,3 @@ mod tests {
         assert!(validate_strict(&spec).is_err());
     }
 }
-

@@ -174,11 +174,7 @@ pub fn namespace_from_string(s: &str) -> Option<NamespaceId> {
 /// }
 /// ```
 pub fn all_namespaces() -> &'static [(NamespaceId, &'static str)] {
-    &[
-        (TRADING, "TRADING"),
-        (PIPELINE, "PIPELINE"),
-        (CHAT, "CHAT"),
-    ]
+    &[(TRADING, "TRADING"), (PIPELINE, "PIPELINE"), (CHAT, "CHAT")]
 }
 
 // =============================================================================
@@ -1309,9 +1305,8 @@ mod tests {
 
     #[test]
     fn test_namespace_path_from_segments() {
-        let path =
-            NamespacePath::from_segments(&["an-ecosystem", "devops", "pipeline", "metrics"])
-                .unwrap();
+        let path = NamespacePath::from_segments(&["an-ecosystem", "devops", "pipeline", "metrics"])
+            .unwrap();
         assert_eq!(path.as_str(), "an-ecosystem.devops.pipeline.metrics");
     }
 
@@ -1440,7 +1435,10 @@ mod tests {
     fn test_namespace_meta_crdt_key() {
         let path = NamespacePath::new("an-ecosystem.devops.pipeline").unwrap();
         let meta = NamespaceMeta::new(&path);
-        assert_eq!(meta.to_crdt_key(), "tensor/an-ecosystem/devops/pipeline/meta");
+        assert_eq!(
+            meta.to_crdt_key(),
+            "tensor/an-ecosystem/devops/pipeline/meta"
+        );
     }
 
     #[test]
@@ -1481,7 +1479,11 @@ mod tests {
         // Verify well-known IDs are within reserved range
         let well_known = [TRADING, PIPELINE, CHAT];
         for id in well_known {
-            assert!(id <= RESERVED_NAMESPACE_MAX, "ID {} exceeds reserved range", id);
+            assert!(
+                id <= RESERVED_NAMESPACE_MAX,
+                "ID {} exceeds reserved range",
+                id
+            );
         }
         assert_eq!(DYNAMIC_NAMESPACE_START, 100);
     }
@@ -1543,6 +1545,3 @@ mod tests {
         }
     }
 }
-
-
-

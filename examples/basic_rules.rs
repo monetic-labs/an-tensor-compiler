@@ -15,29 +15,43 @@ fn main() -> Result<()> {
     //
     // Rules with the same head predicate are compiled as disjunctions:
     //   escalate(X) if (high_risk AND NOT approved) OR (critical AND low_confidence)
-    let spec = RuleSpec::parse("policy_rules", r#"
+    let spec = RuleSpec::parse(
+        "policy_rules",
+        r#"
         escalate(X) :- high_risk(X), not approved(X).
         escalate(X) :- critical_resource(X), low_confidence(X).
-    "#)?;
+    "#,
+    )?;
 
     println!("Parsed {} rules", spec.rules.len());
     println!("Predicates used: {:?}", spec.predicate_names());
 
     // 2. Compile to differentiable tensor function
     let compiled = CompiledRule::compile(spec)?;
-    println!("Compiled '{}' with {} params", compiled.name, compiled.param_count);
+    println!(
+        "Compiled '{}' with {} params",
+        compiled.name, compiled.param_count
+    );
 
     // 3. Create inputs (fuzzy truth values in [0, 1])
     let device = best_device();
     let mut inputs = HashMap::new();
-    inputs.insert("high_risk".to_string(),
-        Tensor::from_vec(vec![0.9f32], 1, &device)?);
-    inputs.insert("approved".to_string(),
-        Tensor::from_vec(vec![0.2f32], 1, &device)?);
-    inputs.insert("critical_resource".to_string(),
-        Tensor::from_vec(vec![0.5f32], 1, &device)?);
-    inputs.insert("low_confidence".to_string(),
-        Tensor::from_vec(vec![0.7f32], 1, &device)?);
+    inputs.insert(
+        "high_risk".to_string(),
+        Tensor::from_vec(vec![0.9f32], 1, &device)?,
+    );
+    inputs.insert(
+        "approved".to_string(),
+        Tensor::from_vec(vec![0.2f32], 1, &device)?,
+    );
+    inputs.insert(
+        "critical_resource".to_string(),
+        Tensor::from_vec(vec![0.5f32], 1, &device)?,
+    );
+    inputs.insert(
+        "low_confidence".to_string(),
+        Tensor::from_vec(vec![0.7f32], 1, &device)?,
+    );
 
     // 4. Forward pass with full explanation
     let output = compiled.forward(&inputs)?;

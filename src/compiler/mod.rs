@@ -49,9 +49,9 @@
 //! ```
 
 pub mod codegen;
+pub mod inference;
 pub mod parser;
 pub mod validation;
-pub mod inference;
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -61,7 +61,7 @@ use std::path::Path;
 pub use codegen::CompiledRuleSet;
 
 // Re-export inference types for high-performance batched inference
-pub use inference::{InputBuffer, BatchedInputBuffer, InferenceContext, BatchedInferenceContext};
+pub use inference::{BatchedInferenceContext, BatchedInputBuffer, InferenceContext, InputBuffer};
 
 /// A rule specification in symbolic form
 ///
@@ -263,11 +263,11 @@ pub enum PredicateSpec {
     },
 
     /// Learned projection: high-dim embedding → scalar predicate
-    /// 
+    ///
     /// Replaces MLPs for embedding-to-predicate conversion.
-    /// Architecture: input → Linear(hidden_dim) → [LayerNorm] → activation → [Dropout] → 
-    ///               [Attention] → Linear(1) → sigmoid
-    /// 
+    /// Architecture: `input → Linear(hidden_dim) → LayerNorm → activation → Dropout →
+    ///               Attention → Linear(1) → sigmoid`
+    ///
     /// # Example
     /// ```ignore
     /// PredicateSpec::LearnedProjection {
@@ -307,17 +307,17 @@ pub enum PredicateSpec {
         /// Add residual/skip connections (requires input_dim == hidden_dim or projection)
         #[serde(default)]
         residual: Option<bool>,
-        
+
         /// FiLM Conditioning: dimension of conditioning vector (e.g., 6 for regime vector)
         /// When set, the conditioning input modulates hidden activations via scale/shift
         #[serde(default)]
         conditioning_dim: Option<usize>,
-        
+
         /// How to apply conditioning (FiLM = Feature-wise Linear Modulation)
         /// FiLM: gamma * hidden + beta, where gamma/beta are projected from conditioning
         #[serde(default)]
         conditioning_type: Option<ConditioningType>,
-        
+
         /// Initialize FiLM layers to identity transform (gamma projection → 0, beta projection → 0)
         /// When true: output = 1.0 * hidden + 0.0 (identity at initialization)
         /// Recommended for training stability - lets model learn modulation from data
@@ -326,9 +326,9 @@ pub enum PredicateSpec {
     },
 
     /// Learned similarity: compare two embeddings → similarity score
-    /// 
+    ///
     /// Replaces MLPs for embedding comparison.
-    /// 
+    ///
     /// # Example
     /// ```ignore
     /// PredicateSpec::LearnedSimilarity {
@@ -350,9 +350,9 @@ pub enum PredicateSpec {
     },
 
     /// Graph Neural predicate: message passing over graph → per-node predicate
-    /// 
+    ///
     /// Implements GraphSAGE-style message passing as Tensor Logic.
-    /// 
+    ///
     /// # Example
     /// ```ignore
     /// PredicateSpec::GraphNeural {
@@ -386,12 +386,12 @@ pub enum PredicateSpec {
         /// Child predicates
         children: Vec<String>,
     },
-    
+
     /// Tier lookup: Multi-threshold step function for utilization-based preferences
-    /// 
+    ///
     /// Maps an input value to one of several output values based on thresholds.
     /// Common for utilization tiers, prestige levels, risk bands, etc.
-    /// 
+    ///
     /// # Example
     /// ```ignore
     /// // Utilization-based provider preference
@@ -422,12 +422,12 @@ pub enum PredicateSpec {
         #[serde(default)]
         interpolate: bool,
     },
-    
+
     /// Pairwise difference: Compare all pairs for arbitrage/gap detection
-    /// 
+    ///
     /// Computes pairwise differences between elements and identifies
     /// significant gaps (e.g., cost arbitrage between providers).
-    /// 
+    ///
     /// # Example
     /// ```ignore
     /// // Detect corridor arbitrage when cost differs > 20% between providers
@@ -439,7 +439,7 @@ pub enum PredicateSpec {
     /// }
     /// ```
     PairwiseDifference {
-        /// Input tensor name (shape [N] for N items to compare)
+        /// Input tensor name (shape `[N]` for N items to compare)
         input: String,
         /// Threshold percentage for significant difference
         threshold_pct: f32,
@@ -452,11 +452,11 @@ pub enum PredicateSpec {
     },
 
     /// Cascading lookup with priority-ordered fallback chain
-    /// 
+    ///
     /// For cost schedule lookup with wildcard fallback patterns.
     /// Given multiple candidate values and their existence masks,
     /// selects the first one that exists with priority weighting.
-    /// 
+    ///
     /// # Example
     /// ```ignore
     /// // Cost schedule lookup: exact → source_wild → dest_wild → global
@@ -543,11 +543,11 @@ impl Activation {
 }
 
 /// Conditioning type for FiLM and other modulation methods
-/// 
+///
 /// FiLM (Feature-wise Linear Modulation) allows a conditioning vector
 /// to modulate hidden activations via learned scale (gamma) and shift (beta):
 ///   output = gamma * hidden + beta
-/// 
+///
 /// This enables regime-aware processing where the same features are
 /// interpreted differently based on market regime.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
@@ -573,7 +573,7 @@ pub enum SimilarityMethod {
     /// Most flexible, learns what "similar" means
     #[default]
     Learned,
-    /// Cosine similarity: a·b / (|a||b|) → [0,1]
+    /// Cosine similarity: `a·b / (|a||b|) → [0,1]`
     Cosine,
     /// Normalized dot product
     DotNormalized,
@@ -675,40 +675,46 @@ impl CompiledRule {
     ///   - `rule_activations`: Per-rule activation values
     ///   - `predicate_activations`: Per-predicate activation values
     ///   - `explanation`: Human-readable explanation
-    pub fn forward(&self, inputs: &HashMap<String, candle_core::Tensor>) -> crate::Result<CompiledOutput> {
+    pub fn forward(
+        &self,
+        inputs: &HashMap<String, candle_core::Tensor>,
+    ) -> crate::Result<CompiledOutput> {
         self.inner.forward(inputs)
     }
-    
+
     /// Fast forward pass: only returns output tensor, skips explanations
-    /// 
+    ///
     /// ~20x faster than `forward()` for hot paths. Use when you only need
     /// the output tensor and don't need rule activations or explanations.
-    /// 
+    ///
     /// # Example
     /// ```ignore
     /// // BEFORE (slow - ~300ms):
     /// let output = compiled.forward(&inputs)?;
     /// let prob = output.output.to_scalar::<f32>()?;
-    /// 
+    ///
     /// // AFTER (fast - ~15ms):
     /// let prob = compiled.forward_fast(&inputs)?.to_scalar::<f32>()?;
     /// ```
     #[inline]
-    pub fn forward_fast(&self, inputs: &HashMap<String, candle_core::Tensor>) -> crate::Result<candle_core::Tensor> {
+    pub fn forward_fast(
+        &self,
+        inputs: &HashMap<String, candle_core::Tensor>,
+    ) -> crate::Result<candle_core::Tensor> {
         self.inner.forward_fast(inputs)
     }
-    
+
     /// Batch forward pass: evaluate multiple input sets in one GPU call
-    /// 
+    ///
     /// For backtesting with many symbols, this provides massive speedup
     /// by batching all evaluations into a single GPU kernel launch.
-    /// 
+    ///
     /// # Arguments
     /// * `batch_inputs` - Vector of input maps, one per sample
-    /// 
+    ///
     /// # Returns
     /// * Tensor of shape [batch_size, output_dim]
-    /// 
+    ///
     /// # Example
     /// ```ignore
     /// // Build inputs for all 102 symbols at this bar
@@ -716,31 +722,34 @@ impl CompiledRule {
     ///     .iter()
     ///     .map(|sym| build_inputs_for_symbol(sym, bar))
     ///     .collect();
-    /// 
+    ///
     /// // One GPU call for all symbols
     /// let probs = compiled.forward_batch(&batch_inputs)?;
     /// ```
     #[inline]
-    pub fn forward_batch(&self, batch_inputs: &[HashMap<String, candle_core::Tensor>]) -> crate::Result<candle_core::Tensor> {
+    pub fn forward_batch(
+        &self,
+        batch_inputs: &[HashMap<String, candle_core::Tensor>],
+    ) -> crate::Result<candle_core::Tensor> {
         self.inner.forward_batch(batch_inputs)
     }
-    
+
     /// Get the inner CompiledRuleSet reference
-    /// 
+    ///
     /// Use this when you need read-only access to the compiled rules.
     pub fn inner(&self) -> &codegen::CompiledRuleSet {
         &self.inner
     }
-    
+
     /// Get a shared Arc reference to the inner CompiledRuleSet
-    /// 
+    ///
     /// Use this for weight sharing with `BatchedInferenceContext`:
     /// ```ignore
     /// // In TradingTLEngine
     /// pub fn get_exit_rules_arc(&self) -> Option<Arc<CompiledRuleSet>> {
     ///     self.exit_rules.as_ref().map(|r| r.inner_arc())
     /// }
-    /// 
+    ///
     /// // Create BatchedInferenceContext with shared weights
     /// let ctx = BatchedInferenceContext::new(
     ///     rules.inner_arc(),  // Same weights as original CompiledRule
@@ -749,15 +758,15 @@ impl CompiledRule {
     ///     &device,
     /// )?;
     /// ```
-    /// 
+    ///
     /// This enables both single-sample and batched inference to share
     /// the same trained weights in memory.
     pub fn inner_arc(&self) -> std::sync::Arc<codegen::CompiledRuleSet> {
         std::sync::Arc::clone(&self.inner)
     }
-    
-    /// Consume the CompiledRule and return the inner Arc<CompiledRuleSet>
-    /// 
+
+    /// Consume the CompiledRule and return the inner `Arc<CompiledRuleSet>`
+    ///
     /// Use with `BatchedInferenceContext::new()` for ownership transfer:
     /// ```ignore
     /// let rules = CompiledRule::compile(spec)?;
@@ -771,21 +780,21 @@ impl CompiledRule {
     pub fn trainable_vars(&self) -> Vec<candle_core::Var> {
         self.inner.trainable_vars()
     }
-    
+
     /// Get only FiLM conditioning variables (for separate learning rate)
-    /// 
+    ///
     /// FiLM layers often need 10x lower learning rate than main network.
     /// Use with `main_vars()` to create separate optimizer groups.
-    /// 
+    ///
     /// # Example
     /// ```ignore
     /// let film_vars = compiled.film_vars();
     /// let main_vars = compiled.main_vars();
-    /// 
+    ///
     /// // Create separate optimizers with different LRs
     /// let mut film_opt = Optimizer::adam(film_vars, 0.00003)?;  // 10x lower
     /// let mut main_opt = Optimizer::adam(main_vars, 0.0003)?;
-    /// 
+    ///
     /// // Training loop
     /// for batch in batches {
     ///     let grads = loss.backward()?;
@@ -796,12 +805,12 @@ impl CompiledRule {
     pub fn film_vars(&self) -> Vec<candle_core::Var> {
         self.inner.film_vars()
     }
-    
+
     /// Get main network variables (excludes FiLM conditioning)
     pub fn main_vars(&self) -> Vec<candle_core::Var> {
         self.inner.main_vars()
     }
-    
+
     /// Check if this rule uses FiLM conditioning
     pub fn has_film(&self) -> bool {
         self.inner.has_film()
@@ -872,22 +881,24 @@ impl CompiledRule {
     /// // Now using learned weights
     /// ```
     pub fn load(&mut self, path: impl AsRef<Path>) -> crate::Result<()> {
-        let data = std::fs::read(path.as_ref())
-            .map_err(|e| crate::TensorCoreError::Serialization(format!("Failed to read file: {}", e)))?;
+        let data = std::fs::read(path.as_ref()).map_err(|e| {
+            crate::TensorCoreError::Serialization(format!("Failed to read file: {}", e))
+        })?;
 
         // Use candle's safetensors loader which handles dtype conversion properly
-        let tensors = candle_core::safetensors::load_buffer(&data, &self.inner.device)
-            .map_err(|e| crate::TensorCoreError::Serialization(format!("Failed to deserialize: {}", e)))?;
+        let tensors =
+            candle_core::safetensors::load_buffer(&data, &self.inner.device).map_err(|e| {
+                crate::TensorCoreError::Serialization(format!("Failed to deserialize: {}", e))
+            })?;
 
         let vars = self.inner.trainable_vars();
-        
+
         for (i, var) in vars.iter().enumerate() {
             let name = format!("param_{}", i);
-            
-            let loaded_tensor = tensors.get(&name)
-                .ok_or_else(|| crate::TensorCoreError::Serialization(
-                    format!("Missing parameter '{}'", name)
-                ))?;
+
+            let loaded_tensor = tensors.get(&name).ok_or_else(|| {
+                crate::TensorCoreError::Serialization(format!("Missing parameter '{}'", name))
+            })?;
 
             // Update the variable
             var.set(loaded_tensor)
@@ -934,8 +945,13 @@ impl CompiledRule {
             "trained_at": metadata.trained_at.to_rfc3339(),
             "param_count": self.param_count,
         });
-        std::fs::write(&meta_path, serde_json::to_string_pretty(&meta_json).unwrap())
-            .map_err(|e| crate::TensorCoreError::Serialization(format!("Failed to save metadata: {}", e)))?;
+        std::fs::write(
+            &meta_path,
+            serde_json::to_string_pretty(&meta_json).unwrap(),
+        )
+        .map_err(|e| {
+            crate::TensorCoreError::Serialization(format!("Failed to save metadata: {}", e))
+        })?;
 
         Ok(())
     }
@@ -954,22 +970,28 @@ impl CompiledRule {
     pub fn load_metadata(path: impl AsRef<Path>) -> crate::Result<RuleCheckpointMetadata> {
         let meta_path = path.as_ref().with_extension("meta.json");
 
-        let meta_json = std::fs::read_to_string(&meta_path)
-            .map_err(|e| crate::TensorCoreError::Serialization(
-                format!("Failed to read metadata file '{}': {}", meta_path.display(), e)
-            ))?;
+        let meta_json = std::fs::read_to_string(&meta_path).map_err(|e| {
+            crate::TensorCoreError::Serialization(format!(
+                "Failed to read metadata file '{}': {}",
+                meta_path.display(),
+                e
+            ))
+        })?;
 
-        let meta_value: serde_json::Value = serde_json::from_str(&meta_json)
-            .map_err(|e| crate::TensorCoreError::Serialization(format!("Invalid metadata JSON: {}", e)))?;
+        let meta_value: serde_json::Value = serde_json::from_str(&meta_json).map_err(|e| {
+            crate::TensorCoreError::Serialization(format!("Invalid metadata JSON: {}", e))
+        })?;
 
         let get_str = |key: &str| -> String {
-            meta_value.get(key)
+            meta_value
+                .get(key)
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string()
         };
 
-        let trained_at = meta_value.get("trained_at")
+        let trained_at = meta_value
+            .get("trained_at")
             .and_then(|v| v.as_str())
             .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
             .map(|dt: chrono::DateTime<chrono::FixedOffset>| dt.with_timezone(&chrono::Utc))
@@ -979,7 +1001,10 @@ impl CompiledRule {
             name: get_str("name"),
             version: get_str("version"),
             spec_hash: get_str("spec_hash"),
-            namespace: meta_value.get("namespace").and_then(|v| v.as_str()).map(|s| s.to_string()),
+            namespace: meta_value
+                .get("namespace")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
             trained_at,
         })
     }
@@ -1034,16 +1059,16 @@ impl CompiledRule {
 pub struct RuleCheckpointMetadata {
     /// Rule set name
     pub name: String,
-    
+
     /// Version string (e.g., "v1.2.3")
     pub version: String,
-    
+
     /// Hash of the rule specification (for compatibility checking)
     pub spec_hash: String,
-    
+
     /// Namespace (for federated predicates)
     pub namespace: Option<String>,
-    
+
     /// When this checkpoint was created
     pub trained_at: chrono::DateTime<chrono::Utc>,
 }
@@ -1071,13 +1096,13 @@ impl RuleCheckpointMetadata {
 fn compute_spec_hash(spec: &RuleSpec) -> String {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
-    
+
     let mut hasher = DefaultHasher::new();
-    
+
     // Hash the essential structure
     spec.name.hash(&mut hasher);
     spec.rules.len().hash(&mut hasher);
-    
+
     for rule in &spec.rules {
         rule.head.hash(&mut hasher);
         rule.body.len().hash(&mut hasher);
@@ -1086,11 +1111,11 @@ fn compute_spec_hash(spec: &RuleSpec) -> String {
             lit.negated.hash(&mut hasher);
         }
     }
-    
+
     for name in spec.predicates.keys() {
         name.hash(&mut hasher);
     }
-    
+
     format!("{:016x}", hasher.finish())
 }
 
@@ -1146,13 +1171,18 @@ impl MultiHeadCompiledRule {
     /// Compile on a specific device
     pub fn compile_on_device(spec: RuleSpec, device: &candle_core::Device) -> crate::Result<Self> {
         if spec.rules.is_empty() {
-            return Err(crate::TensorCoreError::Compiler("No rules to compile".into()));
+            return Err(crate::TensorCoreError::Compiler(
+                "No rules to compile".into(),
+            ));
         }
 
         // Group rules by head
         let mut by_head: HashMap<String, Vec<Rule>> = HashMap::new();
         for rule in &spec.rules {
-            by_head.entry(rule.head.clone()).or_default().push(rule.clone());
+            by_head
+                .entry(rule.head.clone())
+                .or_default()
+                .push(rule.clone());
         }
 
         // Compile each head separately
@@ -1215,19 +1245,22 @@ impl MultiHeadCompiledRule {
 
     /// Get trainable variables from all heads
     pub fn trainable_vars(&self) -> Vec<candle_core::Var> {
-        self.heads.values().flat_map(|h| h.trainable_vars()).collect()
+        self.heads
+            .values()
+            .flat_map(|h| h.trainable_vars())
+            .collect()
     }
-    
+
     /// Get FiLM conditioning variables from all heads (for separate LR)
     pub fn film_vars(&self) -> Vec<candle_core::Var> {
         self.heads.values().flat_map(|h| h.film_vars()).collect()
     }
-    
+
     /// Get main network variables from all heads (excludes FiLM)
     pub fn main_vars(&self) -> Vec<candle_core::Var> {
         self.heads.values().flat_map(|h| h.main_vars()).collect()
     }
-    
+
     /// Check if any head uses FiLM conditioning
     pub fn has_film(&self) -> bool {
         self.heads.values().any(|h| h.has_film())
@@ -1249,12 +1282,13 @@ impl MultiHeadCompiledRule {
     /// Save all heads to a directory (one file per head)
     pub fn save_all(&self, dir: impl AsRef<Path>) -> crate::Result<()> {
         let dir = dir.as_ref();
-        std::fs::create_dir_all(dir)
-            .map_err(|e| crate::TensorCoreError::Serialization(format!("Failed to create dir: {}", e)))?;
+        std::fs::create_dir_all(dir).map_err(|e| {
+            crate::TensorCoreError::Serialization(format!("Failed to create dir: {}", e))
+        })?;
 
         for (head, compiled) in &self.heads {
             let path = dir.join(format!("{}.safetensors", head));
-            
+
             let vars = compiled.trainable_vars();
             if vars.is_empty() {
                 continue; // Skip heads with no trainable params
@@ -1266,8 +1300,9 @@ impl MultiHeadCompiledRule {
                 .map(|(i, v)| (format!("param_{}", i), v.as_tensor().clone()))
                 .collect();
 
-            candle_core::safetensors::save(&tensors, &path)
-                .map_err(|e| crate::TensorCoreError::Serialization(format!("Failed to save {}: {}", head, e)))?;
+            candle_core::safetensors::save(&tensors, &path).map_err(|e| {
+                crate::TensorCoreError::Serialization(format!("Failed to save {}: {}", head, e))
+            })?;
         }
 
         Ok(())
@@ -1279,25 +1314,32 @@ impl MultiHeadCompiledRule {
 
         for (head, compiled) in &self.heads {
             let path = dir.join(format!("{}.safetensors", head));
-            
+
             if !path.exists() {
                 continue; // Skip missing files
             }
 
-            let data = std::fs::read(&path)
-                .map_err(|e| crate::TensorCoreError::Serialization(format!("Failed to read {}: {}", head, e)))?;
+            let data = std::fs::read(&path).map_err(|e| {
+                crate::TensorCoreError::Serialization(format!("Failed to read {}: {}", head, e))
+            })?;
 
             // Use candle's safetensors loader
-            let tensors = candle_core::safetensors::load_buffer(&data, &self.device)
-                .map_err(|e| crate::TensorCoreError::Serialization(format!("Failed to deserialize {}: {}", head, e)))?;
+            let tensors =
+                candle_core::safetensors::load_buffer(&data, &self.device).map_err(|e| {
+                    crate::TensorCoreError::Serialization(format!(
+                        "Failed to deserialize {}: {}",
+                        head, e
+                    ))
+                })?;
 
             let vars = compiled.trainable_vars();
             for (i, var) in vars.iter().enumerate() {
                 let name = format!("param_{}", i);
-                
+
                 if let Some(loaded_tensor) = tensors.get(&name) {
-                    var.set(loaded_tensor)
-                        .map_err(|e| crate::TensorCoreError::Tensor(format!("Failed to set var: {}", e)))?;
+                    var.set(loaded_tensor).map_err(|e| {
+                        crate::TensorCoreError::Tensor(format!("Failed to set var: {}", e))
+                    })?;
                 }
             }
         }
@@ -1322,7 +1364,7 @@ pub struct CompiledOutput {
     pub explanation: String,
 
     /// Learned rule weights (normalized importance of each rule)
-    /// 
+    ///
     /// For disjunctive rules (same head), these weights indicate
     /// the relative importance of each rule after training.
     /// Normalized to sum to 1.0.
@@ -1340,22 +1382,23 @@ mod tests {
         spec.add_rule(Rule::new(
             "exit",
             vec![
-                Literal::positive("profit_target", vec![
-                    Argument::Variable("X".into()),
-                    Argument::Constant(0.02),
-                ]),
-                Literal::positive("momentum_shift", vec![
-                    Argument::Variable("X".into()),
-                ]),
+                Literal::positive(
+                    "profit_target",
+                    vec![Argument::Variable("X".into()), Argument::Constant(0.02)],
+                ),
+                Literal::positive("momentum_shift", vec![Argument::Variable("X".into())]),
             ],
         ));
 
-        spec.add_predicate("profit_target", PredicateSpec::Threshold {
-            input: "unrealized_pnl".into(),
-            threshold: 0.02,
-            greater_than: true,
-            sharpness: 10.0,
-        });
+        spec.add_predicate(
+            "profit_target",
+            PredicateSpec::Threshold {
+                input: "unrealized_pnl".into(),
+                threshold: 0.02,
+                greater_than: true,
+                sharpness: 10.0,
+            },
+        );
 
         assert_eq!(spec.rules.len(), 1);
         assert_eq!(spec.predicates.len(), 1);
@@ -1395,15 +1438,19 @@ mod tests {
 
     #[test]
     fn test_parse_multiple_rules() {
-        let spec = RuleSpec::parse("exit_rules", r#"
+        let spec = RuleSpec::parse(
+            "exit_rules",
+            r#"
             exit(X) :- profit_target(X, 0.02), momentum_shift(X).
             exit(X) :- stop_loss(X, -0.01).
             exit(X) :- regime_change(X), not bullish(X).
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
 
         assert_eq!(spec.name, "exit_rules");
         assert_eq!(spec.rules.len(), 3);
-        
+
         // Third rule should have negation
         assert!(spec.rules[2].body[1].negated);
     }
@@ -1448,7 +1495,7 @@ mod tests {
         // Create a compiled rule with learnable parameters
         let mut spec = RuleSpec::parse("test", "exit(X) :- momentum(X).").unwrap();
         spec.add_predicate("momentum", PredicateSpec::Learned { dim: 4 });
-        
+
         let compiled = CompiledRule::compile(spec.clone()).unwrap();
         assert!(compiled.param_count > 0);
 
@@ -1474,33 +1521,46 @@ mod tests {
     fn test_save_load_preserves_weights() {
         // Create a rule with learned projection
         let mut spec = RuleSpec::parse("test", "score(X) :- proj(X).").unwrap();
-        spec.add_predicate("proj", PredicateSpec::LearnedProjection {
-            inputs: vec!["embedding".into()],
-            input_dim: 4,
-            hidden_dim: 2,
-            activation: Activation::ReLU,
-            attention_heads: None,
-            attention_dropout: None,
-            layer_norm: None,
-            dropout: None,
-            residual: None,
-            conditioning_dim: None,
-            conditioning_type: None,
+        spec.add_predicate(
+            "proj",
+            PredicateSpec::LearnedProjection {
+                inputs: vec!["embedding".into()],
+                input_dim: 4,
+                hidden_dim: 2,
+                activation: Activation::ReLU,
+                attention_heads: None,
+                attention_dropout: None,
+                layer_norm: None,
+                dropout: None,
+                residual: None,
+                conditioning_dim: None,
+                conditioning_type: None,
                 film_identity_init: None,
-        });
-        
+            },
+        );
+
         let compiled = CompiledRule::compile(spec.clone()).unwrap();
 
         // Create test input
         let mut inputs = std::collections::HashMap::new();
         inputs.insert(
             "embedding".to_string(),
-            candle_core::Tensor::from_vec(vec![1.0f32, 2.0, 3.0, 4.0], (1, 4), &candle_core::Device::Cpu).unwrap(),
+            candle_core::Tensor::from_vec(
+                vec![1.0f32, 2.0, 3.0, 4.0],
+                (1, 4),
+                &candle_core::Device::Cpu,
+            )
+            .unwrap(),
         );
 
         // Get output before save
         let output_before = compiled.forward(&inputs).unwrap();
-        let result_before = output_before.output.flatten_all().unwrap().to_vec1::<f32>().unwrap()[0];
+        let result_before = output_before
+            .output
+            .flatten_all()
+            .unwrap()
+            .to_vec1::<f32>()
+            .unwrap()[0];
 
         // Save
         let temp_path = std::env::temp_dir().join("test_preserve_weights.safetensors");
@@ -1512,7 +1572,12 @@ mod tests {
 
         // Get output after load
         let output_after = loaded.forward(&inputs).unwrap();
-        let result_after = output_after.output.flatten_all().unwrap().to_vec1::<f32>().unwrap()[0];
+        let result_after = output_after
+            .output
+            .flatten_all()
+            .unwrap()
+            .to_vec1::<f32>()
+            .unwrap()[0];
 
         // Results should be identical
         assert!((result_before - result_after).abs() < 1e-6);
@@ -1525,18 +1590,18 @@ mod tests {
     fn test_save_with_metadata() {
         let mut spec = RuleSpec::parse("pipeline_rules", "risk(X) :- score(X).").unwrap();
         spec.add_predicate("score", PredicateSpec::Learned { dim: 4 });
-        
+
         let compiled = CompiledRule::compile(spec).unwrap();
 
-        let metadata = RuleCheckpointMetadata::from_compiled(&compiled, "v1.0.0")
-            .with_namespace("PIPELINE");
+        let metadata =
+            RuleCheckpointMetadata::from_compiled(&compiled, "v1.0.0").with_namespace("PIPELINE");
 
         let temp_path = std::env::temp_dir().join("test_metadata.safetensors");
         compiled.save_with_metadata(&temp_path, metadata).unwrap();
 
         // Load metadata back
         let loaded_meta = CompiledRule::load_metadata(&temp_path).unwrap();
-        
+
         assert_eq!(loaded_meta.name, "pipeline_rules");
         assert_eq!(loaded_meta.version, "v1.0.0");
         assert_eq!(loaded_meta.namespace, Some("PIPELINE".to_string()));
@@ -1558,7 +1623,7 @@ mod tests {
 
         // Same spec should produce same hash
         assert_eq!(hash1, hash2);
-        
+
         // Different spec should produce different hash
         assert_ne!(hash1, hash3);
     }
@@ -1568,12 +1633,12 @@ mod tests {
         // Rule with only external predicates (no learnable params)
         let spec = RuleSpec::parse("test", "a(X) :- b(X).").unwrap();
         let compiled = CompiledRule::compile(spec).unwrap();
-        
+
         assert_eq!(compiled.param_count, 0);
-        
+
         let temp_path = std::env::temp_dir().join("test_no_params.safetensors");
         let result = compiled.save(&temp_path);
-        
+
         // Should fail because no trainable variables
         assert!(result.is_err());
     }
@@ -1584,14 +1649,18 @@ mod tests {
 
     #[test]
     fn test_multi_head_compile() {
-        let spec = RuleSpec::parse("policy", r#"
+        let spec = RuleSpec::parse(
+            "policy",
+            r#"
             needs_human(X) :- critical_file(X).
             high_quorum(X) :- high_risk(X), security_file(X).
             escalate(X) :- needs_human(X), urgent(X).
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
 
         let multi = MultiHeadCompiledRule::compile(spec).unwrap();
-        
+
         assert_eq!(multi.head_count(), 3);
         assert!(multi.head_names().contains(&"needs_human".to_string()));
         assert!(multi.head_names().contains(&"high_quorum".to_string()));
@@ -1600,10 +1669,14 @@ mod tests {
 
     #[test]
     fn test_multi_head_forward_all() {
-        let spec = RuleSpec::parse("test", r#"
+        let spec = RuleSpec::parse(
+            "test",
+            r#"
             a(X) :- x(X).
             b(X) :- y(X).
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
 
         let multi = MultiHeadCompiledRule::compile(spec).unwrap();
 
@@ -1618,22 +1691,26 @@ mod tests {
         );
 
         let outputs = multi.forward_all(&inputs).unwrap();
-        
+
         assert_eq!(outputs.len(), 2);
-        
+
         let a_result = outputs.get("a").unwrap().output.to_vec1::<f32>().unwrap()[0];
         let b_result = outputs.get("b").unwrap().output.to_vec1::<f32>().unwrap()[0];
-        
+
         assert!((a_result - 0.7).abs() < 0.001);
         assert!((b_result - 0.3).abs() < 0.001);
     }
 
     #[test]
     fn test_multi_head_forward_single() {
-        let spec = RuleSpec::parse("test", r#"
+        let spec = RuleSpec::parse(
+            "test",
+            r#"
             a(X) :- x(X).
             b(X) :- y(X).
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
 
         let multi = MultiHeadCompiledRule::compile(spec).unwrap();
 
@@ -1650,27 +1727,34 @@ mod tests {
         // Only evaluate head "a"
         let output = multi.forward_head("a", &inputs).unwrap();
         let result = output.output.to_vec1::<f32>().unwrap()[0];
-        
+
         assert!((result - 0.8).abs() < 0.001);
     }
 
     #[test]
     fn test_multi_head_with_shared_predicates() {
         // Multiple heads using the same predicates
-        let mut spec = RuleSpec::parse("test", r#"
+        let mut spec = RuleSpec::parse(
+            "test",
+            r#"
             risk(X) :- score(X).
             alert(X) :- score(X), urgent(X).
-        "#).unwrap();
-        
-        spec.add_predicate("score", PredicateSpec::Threshold {
-            input: "value".into(),
-            threshold: 0.5,
-            greater_than: true,
-            sharpness: 10.0,
-        });
+        "#,
+        )
+        .unwrap();
+
+        spec.add_predicate(
+            "score",
+            PredicateSpec::Threshold {
+                input: "value".into(),
+                threshold: 0.5,
+                greater_than: true,
+                sharpness: 10.0,
+            },
+        );
 
         let multi = MultiHeadCompiledRule::compile(spec).unwrap();
-        
+
         let mut inputs = std::collections::HashMap::new();
         inputs.insert(
             "value".to_string(),
@@ -1682,27 +1766,41 @@ mod tests {
         );
 
         let outputs = multi.forward_all(&inputs).unwrap();
-        
+
         // Both should use the same threshold predicate
-        let risk = outputs.get("risk").unwrap().output.to_vec1::<f32>().unwrap()[0];
-        let alert = outputs.get("alert").unwrap().output.to_vec1::<f32>().unwrap()[0];
-        
-        assert!(risk > 0.5);  // 0.8 > 0.5 threshold
+        let risk = outputs
+            .get("risk")
+            .unwrap()
+            .output
+            .to_vec1::<f32>()
+            .unwrap()[0];
+        let alert = outputs
+            .get("alert")
+            .unwrap()
+            .output
+            .to_vec1::<f32>()
+            .unwrap()[0];
+
+        assert!(risk > 0.5); // 0.8 > 0.5 threshold
         assert!(alert > 0.0); // Combined with urgent
     }
 
     #[test]
     fn test_multi_head_trainable_vars() {
-        let mut spec = RuleSpec::parse("test", r#"
+        let mut spec = RuleSpec::parse(
+            "test",
+            r#"
             a(X) :- learned_a(X).
             b(X) :- learned_b(X).
-        "#).unwrap();
-        
+        "#,
+        )
+        .unwrap();
+
         spec.add_predicate("learned_a", PredicateSpec::Learned { dim: 4 });
         spec.add_predicate("learned_b", PredicateSpec::Learned { dim: 4 });
 
         let multi = MultiHeadCompiledRule::compile(spec).unwrap();
-        
+
         // Each head has 1 learned predicate with dim 4: weights(4x1) + bias(1) = 5 params
         // Total: 10 params (but predicates are duplicated per head in current impl)
         assert!(multi.param_count() > 0);
@@ -1716,9 +1814,7 @@ mod tests {
 
         let inputs = std::collections::HashMap::new();
         let result = multi.forward_head("nonexistent", &inputs);
-        
+
         assert!(result.is_err());
     }
 }
-
-

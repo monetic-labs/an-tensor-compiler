@@ -82,19 +82,12 @@ fn variable(input: &str) -> IResult<&str, &str> {
 
 /// Parse a number (integer or float, possibly negative)
 fn number(input: &str) -> IResult<&str, f32> {
-    map(
-        recognize_float,
-        |s: &str| s.parse::<f32>().unwrap_or(0.0),
-    )(input)
+    map(recognize_float, |s: &str| s.parse::<f32>().unwrap_or(0.0))(input)
 }
 
 /// Parse a string literal
 fn string_literal(input: &str) -> IResult<&str, &str> {
-    delimited(
-        char('"'),
-        take_while(|c| c != '"'),
-        char('"'),
-    )(input)
+    delimited(char('"'), take_while(|c| c != '"'), char('"'))(input)
 }
 
 // =============================================================================
@@ -103,40 +96,17 @@ fn string_literal(input: &str) -> IResult<&str, &str> {
 
 /// Parse implication operator: :- or <- or ←
 fn impl_op(input: &str) -> IResult<&str, ()> {
-    value(
-        (),
-        alt((
-            tag(":-"),
-            tag("<-"),
-            tag("←"),
-        )),
-    )(input)
+    value((), alt((tag(":-"), tag("<-"), tag("←"))))(input)
 }
 
 /// Parse AND operator: , or & or ∧ or "and"
 fn and_op(input: &str) -> IResult<&str, ()> {
-    value(
-        (),
-        alt((
-            tag("∧"),
-            tag("and"),
-            tag("&"),
-            tag(","),
-        )),
-    )(input)
+    value((), alt((tag("∧"), tag("and"), tag("&"), tag(","))))(input)
 }
 
 /// Parse OR operator: ; or | or ∨ or "or"
 fn or_op(input: &str) -> IResult<&str, ()> {
-    value(
-        (),
-        alt((
-            tag("∨"),
-            tag("or"),
-            tag("|"),
-            tag(";"),
-        )),
-    )(input)
+    value((), alt((tag("∨"), tag("or"), tag("|"), tag(";"))))(input)
 }
 
 /// Parse NOT operator: not or ! or ~ or ¬
@@ -167,7 +137,9 @@ fn argument(input: &str) -> IResult<&str, Argument> {
     alt((
         map(variable, |s: &str| Argument::Variable(s.to_string())),
         map(number, Argument::Constant),
-        map(string_literal, |s: &str| Argument::StringConstant(s.to_string())),
+        map(string_literal, |s: &str| {
+            Argument::StringConstant(s.to_string())
+        }),
         // Atoms are lowercase identifiers, treated as string constants
         map(atom, |s: &str| Argument::StringConstant(s.to_string())),
     ))(input)
@@ -177,14 +149,10 @@ fn argument(input: &str) -> IResult<&str, Argument> {
 fn argument_list(input: &str) -> IResult<&str, Vec<Argument>> {
     delimited(
         tuple((char('('), ws0)),
-        separated_list1(
-            tuple((ws0, char(','), ws0)),
-            argument,
-        ),
+        separated_list1(tuple((ws0, char(','), ws0)), argument),
         tuple((ws0, char(')'))),
     )(input)
 }
-
 
 // =============================================================================
 // PREDICATE AND LITERAL PARSERS
@@ -230,19 +198,13 @@ fn literal(input: &str) -> IResult<&str, Literal> {
 
 /// Parse a conjunction (AND of literals)
 fn conjunction(input: &str) -> IResult<&str, Vec<Literal>> {
-    separated_list1(
-        tuple((ws0, and_op, ws0)),
-        literal,
-    )(input)
+    separated_list1(tuple((ws0, and_op, ws0)), literal)(input)
 }
 
 /// Parse a disjunction (OR of conjunctions)
-/// Returns Vec<Vec<Literal>> where outer vec is OR, inner vec is AND
+/// Returns `Vec<Vec<Literal>>` where outer vec is OR, inner vec is AND
 fn disjunction(input: &str) -> IResult<&str, Vec<Vec<Literal>>> {
-    separated_list1(
-        tuple((ws0, or_op, ws0)),
-        conjunction,
-    )(input)
+    separated_list1(tuple((ws0, or_op, ws0)), conjunction)(input)
 }
 
 // =============================================================================
@@ -258,10 +220,10 @@ fn rule(input: &str) -> IResult<&str, Vec<Rule>> {
     let (input, _) = ws(input)?;
     let (input, (head_name, head_args)) = predicate(input)?;
     let (input, _) = ws0(input)?;
-    
+
     // Check if there's an implication operator
     let (input, has_body) = opt(impl_op)(input)?;
-    
+
     let (input, body_disjunctions) = if has_body.is_some() {
         // Parse the body after :-
         let (input, _) = ws0(input)?;
@@ -272,13 +234,15 @@ fn rule(input: &str) -> IResult<&str, Vec<Rule>> {
         // We create an empty body which will evaluate to 1.0
         (input, vec![vec![]])
     };
-    
+
     let (input, _) = ws0(input)?;
     let (input, _) = opt(char('.'))(input)?; // Optional period
 
     // Convert disjunction to multiple rules (disjunctive normal form)
     // For facts, body_disjunctions is [[]] which creates one rule with empty body
-    let rules: Vec<Rule> = if body_disjunctions.is_empty() || (body_disjunctions.len() == 1 && body_disjunctions[0].is_empty()) {
+    let rules: Vec<Rule> = if body_disjunctions.is_empty()
+        || (body_disjunctions.len() == 1 && body_disjunctions[0].is_empty())
+    {
         // Fact: single rule with empty body
         vec![Rule {
             head: head_name.to_string(),
@@ -350,10 +314,7 @@ pub fn parse_rules(name: &str, source: &str) -> Result<RuleSpec> {
                 predicates: std::collections::HashMap::new(),
             })
         }
-        Err(e) => Err(TensorCoreError::Compiler(format!(
-            "Parse error: {:?}",
-            e
-        ))),
+        Err(e) => Err(TensorCoreError::Compiler(format!("Parse error: {:?}", e))),
     }
 }
 
@@ -370,10 +331,7 @@ pub fn parse_single_rule(source: &str) -> Result<Rule> {
                 Ok(rules.remove(0))
             }
         }
-        Err(e) => Err(TensorCoreError::Compiler(format!(
-            "Parse error: {:?}",
-            e
-        ))),
+        Err(e) => Err(TensorCoreError::Compiler(format!("Parse error: {:?}", e))),
     }
 }
 
@@ -543,11 +501,15 @@ mod tests {
 
     #[test]
     fn test_parse_rules_full_spec() {
-        let spec = parse_rules("exit_rules", r#"
+        let spec = parse_rules(
+            "exit_rules",
+            r#"
             exit(X) :- profit_target(X, 0.02), momentum_shift(X).
             exit(X) :- stop_loss(X, -0.01).
             exit(X) :- regime_change(X), not bullish(X).
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
 
         assert_eq!(spec.name, "exit_rules");
         assert_eq!(spec.rules.len(), 3);
@@ -607,11 +569,11 @@ mod tests {
         "#;
         let spec = parse_rules("mixed", source).unwrap();
         assert_eq!(spec.rules.len(), 4);
-        
+
         // First two are facts (empty body)
         assert!(spec.rules[0].body.is_empty());
         assert!(spec.rules[1].body.is_empty());
-        
+
         // Last two are rules (have body)
         assert_eq!(spec.rules[2].body.len(), 1);
         assert_eq!(spec.rules[2].body[0].predicate, "has_basic_kyc");
@@ -689,20 +651,19 @@ mod tests {
             panel_access(partner_management) :- is_admin.
             panel_access(customer_management) :- is_admin.
         "#;
-        
+
         let spec = parse_rules("monetic_panels", source).unwrap();
         assert_eq!(spec.rules.len(), 9);
-        
+
         // All should have head "panel_access"
         assert!(spec.rules.iter().all(|r| r.head == "panel_access"));
-        
+
         // First 3 are facts
         assert!(spec.rules[0].body.is_empty());
         assert!(spec.rules[1].body.is_empty());
         assert!(spec.rules[2].body.is_empty());
-        
+
         // Rest are rules
         assert!(!spec.rules[3].body.is_empty());
     }
 }
-

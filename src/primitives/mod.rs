@@ -5,7 +5,7 @@
 //! ## Thread Safety
 //!
 //! Metal GPU command buffers are **not thread-safe**. When using parallel workloads
-//! (e.g., with rayon), see [`tensor_ops`] for thread-safe device selection options:
+//! (e.g., with rayon), use the thread-safe device selection options:
 //!
 //! - Set `AN_TENSOR_NO_GPU=1` to force CPU mode
 //! - Use [`thread_local_device`] for per-thread devices
@@ -13,18 +13,15 @@
 //!
 //! ## Submodules
 //!
-//! - [`fuzzy_ops`]: Fuzzy logic operators (AND, OR, NOT, IMPLIES)
-//! - [`tensor_ops`]: Core tensor operations (matmul, cosine similarity)
-//! - [`activations`]: Activation functions (sigmoid, softmax, relu)
+//! - Fuzzy logic operators (AND, OR, NOT, IMPLIES)
+//! - Core tensor operations (matmul, cosine similarity)
+//! - Activation functions (sigmoid, softmax, relu)
 
+mod activations;
 mod fuzzy_ops;
 mod tensor_ops;
-mod activations;
 
 // Re-export all primitives at module level
+pub use activations::*;
 pub use fuzzy_ops::*;
 pub use tensor_ops::*;
-pub use activations::*;
-
-
-

@@ -2,8 +2,8 @@
 //!
 //! Standard neural network activation functions used in Tensor Logic.
 
-use candle_core::Tensor;
 use crate::{Result, TensorCoreError};
+use candle_core::Tensor;
 
 /// Sigmoid activation: σ(x) = 1 / (1 + e^(-x))
 ///
@@ -11,13 +11,16 @@ use crate::{Result, TensorCoreError};
 /// - Converting logits to probabilities
 /// - Soft thresholding in fuzzy logic
 pub fn sigmoid(tensor: &Tensor) -> Result<Tensor> {
-    let neg = tensor.neg()
+    let neg = tensor
+        .neg()
         .map_err(|e| TensorCoreError::Tensor(format!("sigmoid neg failed: {}", e)))?;
-    let exp_neg = neg.exp()
+    let exp_neg = neg
+        .exp()
         .map_err(|e| TensorCoreError::Tensor(format!("sigmoid exp failed: {}", e)))?;
     let one_plus = (exp_neg + 1.0)
         .map_err(|e| TensorCoreError::Tensor(format!("sigmoid add failed: {}", e)))?;
-    one_plus.recip()
+    one_plus
+        .recip()
         .map_err(|e| TensorCoreError::Tensor(format!("sigmoid recip failed: {}", e)))
 }
 
@@ -33,7 +36,8 @@ pub fn softmax(tensor: &Tensor, dim: usize) -> Result<Tensor> {
 ///
 /// Rectified Linear Unit - the most common activation in deep learning.
 pub fn relu(tensor: &Tensor) -> Result<Tensor> {
-    tensor.relu()
+    tensor
+        .relu()
         .map_err(|e| TensorCoreError::Tensor(format!("ReLU failed: {}", e)))
 }
 
@@ -43,10 +47,12 @@ pub fn leaky_relu(tensor: &Tensor, negative_slope: f64) -> Result<Tensor> {
     let zeros = Tensor::zeros_like(tensor)
         .map_err(|e| TensorCoreError::Tensor(format!("zeros_like failed: {}", e)))?;
 
-    let positive = tensor.maximum(&zeros)
+    let positive = tensor
+        .maximum(&zeros)
         .map_err(|e| TensorCoreError::Tensor(format!("maximum failed: {}", e)))?;
 
-    let negative = tensor.minimum(&zeros)
+    let negative = tensor
+        .minimum(&zeros)
         .map_err(|e| TensorCoreError::Tensor(format!("minimum failed: {}", e)))?;
 
     let scaled_negative = (negative * negative_slope)
@@ -60,7 +66,8 @@ pub fn leaky_relu(tensor: &Tensor, negative_slope: f64) -> Result<Tensor> {
 ///
 /// Maps any real number to (-1, 1).
 pub fn tanh(tensor: &Tensor) -> Result<Tensor> {
-    tensor.tanh()
+    tensor
+        .tanh()
         .map_err(|e| TensorCoreError::Tensor(format!("tanh failed: {}", e)))
 }
 
@@ -73,7 +80,8 @@ pub fn gelu(tensor: &Tensor) -> Result<Tensor> {
     let scaled = (tensor * 1.702)
         .map_err(|e| TensorCoreError::Tensor(format!("GELU scale failed: {}", e)))?;
     let sig = sigmoid(&scaled)?;
-    tensor.mul(&sig)
+    tensor
+        .mul(&sig)
         .map_err(|e| TensorCoreError::Tensor(format!("GELU mul failed: {}", e)))
 }
 
@@ -162,4 +170,3 @@ mod tests {
         assert!(vals[1] > vals[0]);
     }
 }
-

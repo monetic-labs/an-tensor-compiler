@@ -78,7 +78,6 @@ pub enum TensorMergeStrategy {
     },
 }
 
-
 // ============================================================================
 // Vector Clock
 // ============================================================================
@@ -128,9 +127,9 @@ impl VectorClock {
     ///
     /// Returns true if all components of self <= other.
     pub fn happens_before(&self, other: &VectorClock) -> bool {
-        self.clocks.iter().all(|(node, &clock)| {
-            other.clocks.get(node).copied().unwrap_or(0) >= clock
-        })
+        self.clocks
+            .iter()
+            .all(|(node, &clock)| other.clocks.get(node).copied().unwrap_or(0) >= clock)
     }
 
     /// Check if clocks are concurrent (neither happens-before the other)
@@ -441,7 +440,8 @@ impl AttentionMapCrdt {
     pub fn update(&mut self, context: impl Into<String>, attention: f32) {
         let context = context.into();
         self.attention.insert(context.clone(), attention);
-        self.timestamps.insert(context, chrono::Utc::now().timestamp());
+        self.timestamps
+            .insert(context, chrono::Utc::now().timestamp());
         self.clock.increment(&self.node_id);
     }
 
@@ -455,7 +455,7 @@ impl AttentionMapCrdt {
         for (context, &attention) in &other.attention {
             let current = self.attention.entry(context.clone()).or_insert(0.0);
             *current = current.max(attention);
-            
+
             // Update timestamp to latest
             let other_ts = other.timestamps.get(context).copied().unwrap_or(0);
             let current_ts = self.timestamps.entry(context.clone()).or_insert(0);
@@ -469,7 +469,7 @@ impl AttentionMapCrdt {
         for (context, &attention) in &other.attention {
             let other_ts = other.timestamps.get(context).copied().unwrap_or(0);
             let current_ts = self.timestamps.get(context).copied().unwrap_or(0);
-            
+
             if other_ts > current_ts {
                 self.attention.insert(context.clone(), attention);
                 self.timestamps.insert(context.clone(), other_ts);
@@ -501,26 +501,26 @@ mod tests {
     fn test_vector_clock_ordering() {
         let mut clock_a = VectorClock::new();
         let mut clock_b = VectorClock::new();
-        
+
         // Empty clocks: both happen-before each other (vacuously true)
         // So they're not concurrent by our definition
-        
+
         // A advances
         clock_a.increment("node_a");
         clock_a.increment("node_a");
-        
+
         // B advances on different node
         clock_b.increment("node_b");
-        
+
         // They're concurrent (neither has seen the other's updates)
         // A doesn't happen-before B (A has node_a=2, B has node_a=0)
         // B doesn't happen-before A (B has node_b=1, A has node_b=0)
         assert!(!clock_a.happens_before(&clock_b));
         assert!(!clock_b.happens_before(&clock_a));
-        
+
         // B merges A (B now has both node_a=2 and node_b=1)
         clock_b.merge(&clock_a);
-        
+
         // Now A happens-before B (A's node_a=2 <= B's node_a=2)
         assert!(clock_a.happens_before(&clock_b));
         assert!(!clock_b.happens_before(&clock_a));
@@ -531,15 +531,15 @@ mod tests {
         let from = VectorClock::with_node("node_a");
         let mut to = from.clone();
         to.increment("node_a");
-        
+
         let mut delta = TensorDelta::new("node_a", from, to);
-        
+
         delta.add_op(TensorOp::AttentionUpdate {
             context: "synapse".into(),
             attention: 0.8,
             strategy: AttentionMerge::Max,
         });
-        
+
         assert_eq!(delta.len(), 1);
         assert!(!delta.is_empty());
     }
@@ -548,15 +548,15 @@ mod tests {
     fn test_attention_map_crdt() {
         let mut map_a = AttentionMapCrdt::new("device_a");
         let mut map_b = AttentionMapCrdt::new("device_b");
-        
+
         // Concurrent updates
         map_a.update("context1", 0.5);
         map_b.update("context1", 0.8);
         map_b.update("context2", 0.3);
-        
+
         // Merge with max
         map_a.merge_max(&map_b);
-        
+
         assert_eq!(map_a.get("context1"), 0.8); // Max wins
         assert_eq!(map_a.get("context2"), 0.3); // New from B
     }
@@ -565,10 +565,10 @@ mod tests {
     fn test_tensor_element_max() {
         let a = Tensor::from_slice(&[1.0f32, 5.0, 3.0], &[3], &Device::Cpu).unwrap();
         let b = Tensor::from_slice(&[2.0f32, 1.0, 4.0], &[3], &Device::Cpu).unwrap();
-        
+
         let result = tensor_element_max(&a, &b).unwrap();
         let values: Vec<f32> = result.to_vec1().unwrap();
-        
+
         assert_eq!(values, vec![2.0, 5.0, 4.0]);
     }
 
@@ -576,10 +576,10 @@ mod tests {
     fn test_tensor_blend() {
         let a = Tensor::from_slice(&[1.0f32, 1.0], &[2], &Device::Cpu).unwrap();
         let b = Tensor::from_slice(&[3.0f32, 3.0], &[2], &Device::Cpu).unwrap();
-        
+
         let result = tensor_blend(&a, &b, 0.5).unwrap();
         let values: Vec<f32> = result.to_vec1().unwrap();
-        
+
         // 0.5 * 1.0 + 0.5 * 3.0 = 2.0
         assert!((values[0] - 2.0).abs() < 0.01);
         assert!((values[1] - 2.0).abs() < 0.01);
@@ -588,12 +588,12 @@ mod tests {
     #[test]
     fn test_crdt_state() {
         let mut state = CrdtState::new(42i32, "node_a", TensorMergeStrategy::LastWriterWins);
-        
+
         assert_eq!(*state.get(), 42);
         assert_eq!(state.clock.get("node_a"), 0);
-        
+
         state.update(100);
-        
+
         assert_eq!(*state.get(), 100);
         assert_eq!(state.clock.get("node_a"), 1);
     }
