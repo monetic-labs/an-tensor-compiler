@@ -527,6 +527,21 @@ pub enum Activation {
     None,
 }
 
+impl Activation {
+    /// Apply this activation function to a tensor
+    ///
+    /// Routes to the corresponding implementation in [`crate::primitives`].
+    pub fn apply(&self, tensor: &candle_core::Tensor) -> crate::Result<candle_core::Tensor> {
+        match self {
+            Self::ReLU => crate::primitives::relu(tensor),
+            Self::GELU => crate::primitives::gelu(tensor),
+            Self::Sigmoid => crate::primitives::sigmoid(tensor),
+            Self::Tanh => crate::primitives::tanh(tensor),
+            Self::None => Ok(tensor.clone()),
+        }
+    }
+}
+
 /// Conditioning type for FiLM and other modulation methods
 /// 
 /// FiLM (Feature-wise Linear Modulation) allows a conditioning vector
@@ -583,8 +598,11 @@ pub enum Aggregation {
 /// How to combine predicates in a composite
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CompositeOp {
+    /// Fuzzy AND (product t-norm)
     And,
+    /// Fuzzy OR (probabilistic sum)
     Or,
+    /// Fuzzy NOT (complement)
     Not,
 }
 
@@ -599,13 +617,13 @@ pub enum CompositeOp {
 /// This is a thin wrapper around `CompiledRuleSet` for backwards compatibility.
 #[derive(Debug)]
 pub struct CompiledRule {
-    /// Name of this compiled rule
+    /// Name of this compiled rule set
     pub name: String,
 
-    /// Source specification (for debugging)
+    /// Source specification (retained for debugging and serialization)
     pub source: RuleSpec,
 
-    /// Number of trainable parameters
+    /// Total number of trainable parameters across all predicates
     pub param_count: usize,
 
     /// The actual compiled rule set (Arc for weight sharing with BatchedInferenceContext)
@@ -924,35 +942,34 @@ impl CompiledRule {
 
     /// Load and return metadata from a checkpoint
     ///
-    /// Returns metadata if the checkpoint was saved with `save_with_metadata`.
-    /// Returns an error if the file has no metadata.
+    /// Reads the sidecar `.meta.json` file created by `save_with_metadata`.
+    /// Returns an error if the metadata file doesn't exist.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let meta = CompiledRule::load_metadata("models/pipeline_rules_v1.safetensors")?;
+    /// println!("Version: {}", meta.version);
+    /// ```
     pub fn load_metadata(path: impl AsRef<Path>) -> crate::Result<RuleCheckpointMetadata> {
-        let data = std::fs::read(path.as_ref())
-            .map_err(|e| crate::TensorCoreError::Serialization(format!("Failed to read file: {}", e)))?;
+        let meta_path = path.as_ref().with_extension("meta.json");
 
-        // Parse header to get metadata
-        let header_size = u64::from_le_bytes(data[0..8].try_into().unwrap()) as usize;
-        let header_json = std::str::from_utf8(&data[8..8 + header_size])
-            .map_err(|e| crate::TensorCoreError::Serialization(format!("Invalid header: {}", e)))?;
+        let meta_json = std::fs::read_to_string(&meta_path)
+            .map_err(|e| crate::TensorCoreError::Serialization(
+                format!("Failed to read metadata file '{}': {}", meta_path.display(), e)
+            ))?;
 
-        // Parse as JSON to get __metadata__ field
-        let header: serde_json::Value = serde_json::from_str(header_json)
-            .map_err(|e| crate::TensorCoreError::Serialization(format!("Invalid JSON: {}", e)))?;
-
-        let meta_map = header.get("__metadata__")
-            .and_then(|v| v.as_object())
-            .ok_or_else(|| {
-                crate::TensorCoreError::Serialization("No metadata in checkpoint".into())
-            })?;
+        let meta_value: serde_json::Value = serde_json::from_str(&meta_json)
+            .map_err(|e| crate::TensorCoreError::Serialization(format!("Invalid metadata JSON: {}", e)))?;
 
         let get_str = |key: &str| -> String {
-            meta_map.get(key)
+            meta_value.get(key)
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string()
         };
 
-        let trained_at = meta_map.get("trained_at")
+        let trained_at = meta_value.get("trained_at")
             .and_then(|v| v.as_str())
             .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
             .map(|dt: chrono::DateTime<chrono::FixedOffset>| dt.with_timezone(&chrono::Utc))
@@ -962,7 +979,7 @@ impl CompiledRule {
             name: get_str("name"),
             version: get_str("version"),
             spec_hash: get_str("spec_hash"),
-            namespace: meta_map.get("namespace").and_then(|v| v.as_str()).map(|s| s.to_string()),
+            namespace: meta_value.get("namespace").and_then(|v| v.as_str()).map(|s| s.to_string()),
             trained_at,
         })
     }
@@ -1505,7 +1522,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TODO: checkpoint metadata serialization not persisting - needs safetensors fix"]
     fn test_save_with_metadata() {
         let mut spec = RuleSpec::parse("pipeline_rules", "risk(X) :- score(X).").unwrap();
         spec.add_predicate("score", PredicateSpec::Learned { dim: 4 });

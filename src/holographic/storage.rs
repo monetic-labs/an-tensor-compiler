@@ -9,7 +9,6 @@
 //! - **Incremental updates**: Git-based change detection for partial re-encoding
 
 use crate::holographic::types::*;
-use crate::holographic::ops::superimpose;
 use crate::{Result, TensorCoreError, Device, Tensor};
 use safetensors::SafeTensors;
 use safetensors::tensor::TensorView;
@@ -26,12 +25,13 @@ use chrono::{DateTime, Utc};
 pub struct TensorStore {
     /// Base directory for tensor storage
     base_path: std::path::PathBuf,
-    
+
     /// Device for loaded tensors
     device: Device,
 }
 
 impl TensorStore {
+    /// Create a new tensor store at the given base path
     pub fn new(base_path: impl AsRef<Path>, device: Device) -> Self {
         Self {
             base_path: base_path.as_ref().to_path_buf(),
@@ -533,6 +533,7 @@ pub struct CacheEntry {
 }
 
 impl ComponentCache {
+    /// Create a new component cache at the given directory
     pub fn new(cache_dir: impl AsRef<Path>, device: Device) -> Self {
         let cache_dir = cache_dir.as_ref().to_path_buf();
         let index = Self::load_index(&cache_dir).unwrap_or_default();
@@ -723,8 +724,11 @@ impl ComponentCache {
 /// Cache statistics
 #[derive(Debug, Clone)]
 pub struct CacheStats {
+    /// Number of cached file entries
     pub total_entries: usize,
+    /// Total number of cached component tensors
     pub total_components: usize,
+    /// Path to the cache directory
     pub cache_dir: PathBuf,
 }
 
@@ -733,6 +737,12 @@ pub struct CacheStats {
 // ============================================================================
 
 /// Tracks which files need re-encoding
+///
+/// # Requirements
+///
+/// This type requires `git` to be available on the system PATH.
+/// If git is not available, [`IncrementalState::analyze()`] will return an error.
+/// In environments without git, treat all files as changed (full re-encoding).
 pub struct IncrementalState {
     /// Previous commit hash
     pub previous_commit: Option<String>,
@@ -818,30 +828,43 @@ impl IncrementalState {
 }
 
 /// Get current git commit
+///
+/// Requires `git` on PATH. Returns an error if git is unavailable or the
+/// directory is not a git repository.
 fn get_current_commit(root: &Path) -> Result<String> {
     let output = std::process::Command::new("git")
         .args(["rev-parse", "HEAD"])
         .current_dir(root)
         .output()
-        .map_err(|e| TensorCoreError::Config(format!("Git error: {}", e)))?;
-    
+        .map_err(|e| TensorCoreError::Config(format!(
+            "Git not available (required for incremental encoding): {}. \
+             Install git or use full re-encoding instead.", e
+        )))?;
+
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     } else {
-        Err(TensorCoreError::Config("Not a git repository".into()))
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(TensorCoreError::Config(format!(
+            "Not a git repository at '{}': {}", root.display(), stderr.trim()
+        )))
     }
 }
 
 /// Get files changed between commits
+///
+/// Returns only `.rs` files that differ between `since_commit` and HEAD.
 fn get_changed_files(root: &Path, since_commit: &str) -> Result<HashSet<PathBuf>> {
     let output = std::process::Command::new("git")
         .args(["diff", "--name-only", since_commit, "HEAD"])
         .current_dir(root)
         .output()
-        .map_err(|e| TensorCoreError::Config(format!("Git error: {}", e)))?;
-    
+        .map_err(|e| TensorCoreError::Config(format!(
+            "Git diff failed (required for incremental encoding): {}", e
+        )))?;
+
     let mut files = HashSet::new();
-    
+
     if output.status.success() {
         let changed = String::from_utf8_lossy(&output.stdout);
         for line in changed.lines() {
@@ -850,28 +873,45 @@ fn get_changed_files(root: &Path, since_commit: &str) -> Result<HashSet<PathBuf>
             }
         }
     }
-    
+
     Ok(files)
 }
 
-/// Get all Rust files in a project
+/// Get all Rust files in a project via `git ls-files`
+///
+/// Falls back to walkdir-based discovery if git is unavailable.
 fn get_all_rust_files(root: &Path) -> Result<HashSet<PathBuf>> {
     let output = std::process::Command::new("git")
         .args(["ls-files", "*.rs"])
         .current_dir(root)
-        .output()
-        .map_err(|e| TensorCoreError::Config(format!("Git error: {}", e)))?;
-    
-    let mut files = HashSet::new();
-    
-    if output.status.success() {
-        let all = String::from_utf8_lossy(&output.stdout);
-        for line in all.lines() {
-            files.insert(root.join(line));
+        .output();
+
+    match output {
+        Ok(output) if output.status.success() => {
+            let mut files = HashSet::new();
+            let all = String::from_utf8_lossy(&output.stdout);
+            for line in all.lines() {
+                files.insert(root.join(line));
+            }
+            Ok(files)
+        }
+        _ => {
+            // Fallback: walk directory tree for .rs files
+            let mut files = HashSet::new();
+            for entry in walkdir::WalkDir::new(root)
+                .into_iter()
+                .filter_map(|e| e.ok())
+            {
+                let path = entry.path();
+                if path.extension().map_or(false, |ext| ext == "rs")
+                    && !path.to_string_lossy().contains("/target/")
+                {
+                    files.insert(path.to_path_buf());
+                }
+            }
+            Ok(files)
         }
     }
-    
-    Ok(files)
 }
 
 // ============================================================================

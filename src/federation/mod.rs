@@ -569,21 +569,23 @@ pub struct SyncReport {
 /// Status of syncing a single predicate
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PredicateSyncStatus {
-    /// Successfully synced
+    /// Successfully synced with merged parameters
     Success {
-        /// Namespaces that contributed
+        /// Namespaces that contributed to the merge
         contributors: Vec<NamespaceId>,
-        /// New version number
+        /// New version number after merge
         new_version: u64,
     },
 
-    /// Skipped (no updates)
+    /// Skipped due to insufficient data or confidence
     Skipped {
+        /// Reason the sync was skipped
         reason: String,
     },
 
-    /// Failed
+    /// Sync failed with an error
     Failed {
+        /// Error description
         error: String,
     },
 }

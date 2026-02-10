@@ -48,8 +48,8 @@ pub struct InputBuffer {
     /// Backing storage for scalar inputs (CPU side)
     scalars: Vec<f32>,
     
-    /// Total feature count
-    feature_count: usize,
+    /// Total feature count (retained for future buffer validation)
+    _feature_count: usize,
     
     /// Device
     device: Device,
@@ -81,7 +81,7 @@ impl InputBuffer {
             name_to_idx,
             tensors,
             scalars,
-            feature_count,
+            _feature_count: feature_count,
             device: device.clone(),
             dirty: true,
         })
@@ -106,7 +106,7 @@ impl InputBuffer {
             name_to_idx,
             tensors,
             scalars,
-            feature_count,
+            _feature_count: feature_count,
             device: device.clone(),
             dirty: false,
         })
@@ -382,9 +382,6 @@ pub struct InferenceContext {
     
     /// Cached output tensor (avoid allocation)
     last_output: Option<Tensor>,
-    
-    /// Device
-    device: Device,
 }
 
 impl InferenceContext {
@@ -400,7 +397,6 @@ impl InferenceContext {
             rules,
             buffer,
             last_output: None,
-            device: device.clone(),
         })
     }
     
@@ -519,9 +515,6 @@ pub struct BatchedInferenceContext {
     
     /// Cached output vector (avoid allocation)
     output_cache: Vec<f32>,
-    
-    /// Device
-    device: Device,
 }
 
 impl BatchedInferenceContext {
@@ -539,7 +532,6 @@ impl BatchedInferenceContext {
             rules,
             buffer,
             output_cache,
-            device: device.clone(),
         })
     }
     

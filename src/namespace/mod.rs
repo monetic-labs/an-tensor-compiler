@@ -63,16 +63,32 @@ use std::sync::Arc;
 ///
 /// # Allocation Strategy
 ///
-/// - **0-99**: Reserved for well-known namespaces (TRADING=0, PIPELINE=1, CHAT=2)
+/// - **0-99**: Reserved for well-known namespaces (example defaults provided below)
 /// - **100+**: Dynamic allocation via `NamespaceRegistry::register()`
 ///
-/// The well-known constants are hardcoded for performance. New teams register
-/// via the registry and receive IDs starting at 100.
+/// # Defining Your Own Namespaces
 ///
-/// # Future Direction
+/// The pre-defined constants (`TRADING`, `PIPELINE`, `CHAT`) are provided as
+/// examples for common domain patterns. You can:
 ///
-/// Consider making the registry itself a CRDT map for fully decentralized
-/// namespace claiming without core library changes.
+/// 1. **Use them directly** if your domains map naturally
+/// 2. **Register custom domains** via [`NamespaceRegistry::register()`] (IDs start at 100)
+/// 3. **Define your own constants** in the reserved range (0-99) for performance-critical paths
+///
+/// ```rust,ignore
+/// use an_tensor_compiler::namespace::NamespaceId;
+///
+/// // Option 1: Use the provided defaults
+/// use an_tensor_compiler::namespace::PIPELINE;
+///
+/// // Option 2: Define your own well-known namespace
+/// pub const INFERENCE: NamespaceId = 10;
+/// pub const TRAINING: NamespaceId = 11;
+///
+/// // Option 3: Dynamic registration
+/// let mut registry = NamespaceRegistry::new();
+/// let my_domain = registry.register("my-custom-domain");
+/// ```
 pub type NamespaceId = u32;
 
 /// Reserved range for well-known namespaces (0-99)
@@ -81,13 +97,19 @@ pub const RESERVED_NAMESPACE_MAX: NamespaceId = 99;
 /// First ID available for dynamic allocation
 pub const DYNAMIC_NAMESPACE_START: NamespaceId = 100;
 
-/// Well-known namespace: Trading Engine (org-lttr)
+/// Example well-known namespace: Trading / real-time decision engine
+///
+/// Pre-defined for convenience. See [`NamespaceId`] docs for how to define your own.
 pub const TRADING: NamespaceId = 0;
 
-/// Well-known namespace: Pipeline Engine (an-ecosystem)
+/// Example well-known namespace: Pipeline / CI/CD / batch processing
+///
+/// Pre-defined for convenience. See [`NamespaceId`] docs for how to define your own.
 pub const PIPELINE: NamespaceId = 1;
 
-/// Well-known namespace: Chat Engine (an-agent)
+/// Example well-known namespace: Chat / conversational agent
+///
+/// Pre-defined for convenience. See [`NamespaceId`] docs for how to define your own.
 pub const CHAT: NamespaceId = 2;
 
 // =============================================================================

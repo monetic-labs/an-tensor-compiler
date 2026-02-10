@@ -261,6 +261,7 @@ pub fn metal_available() -> bool {
     !gpu_disabled() && Device::new_metal(0).is_ok()
 }
 
+/// Check if Metal is available (always false when `metal` feature is not enabled)
 #[cfg(not(feature = "metal"))]
 pub fn metal_available() -> bool {
     false
@@ -272,6 +273,7 @@ pub fn cuda_available() -> bool {
     !gpu_disabled() && Device::new_cuda(0).is_ok()
 }
 
+/// Check if CUDA is available (always false when `cuda` feature is not enabled)
 #[cfg(not(feature = "cuda"))]
 pub fn cuda_available() -> bool {
     false

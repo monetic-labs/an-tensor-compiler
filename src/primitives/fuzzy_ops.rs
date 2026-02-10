@@ -232,6 +232,41 @@ pub fn weighted_rule_combination(
     super::activations::sigmoid(&squeezed)
 }
 
+/// Core asymmetric loss computation (per-element, unreduced)
+///
+/// Computes per-element weighted squared errors where underprediction
+/// (actual > predicted) and overprediction receive different penalty weights.
+fn asymmetric_loss_core(
+    predicted: &Tensor,
+    actual: &Tensor,
+    underprediction_weight: f32,
+    overprediction_weight: f32,
+) -> Result<Tensor> {
+    let errors = actual.sub(predicted)
+        .map_err(|e| TensorCoreError::Tensor(format!("asymmetric_loss sub failed: {}", e)))?;
+    let squared = errors.sqr()
+        .map_err(|e| TensorCoreError::Tensor(format!("asymmetric_loss sqr failed: {}", e)))?;
+
+    // Create asymmetric weights based on error sign
+    let zeros = Tensor::zeros_like(&errors)
+        .map_err(|e| TensorCoreError::Tensor(format!("asymmetric_loss zeros failed: {}", e)))?;
+    let positive_mask = errors.gt(&zeros)
+        .map_err(|e| TensorCoreError::Tensor(format!("asymmetric_loss gt failed: {}", e)))?;
+
+    let ones = Tensor::ones_like(&errors)
+        .map_err(|e| TensorCoreError::Tensor(format!("asymmetric_loss ones failed: {}", e)))?;
+    let weight_under = ones.affine(underprediction_weight as f64, 0.0)
+        .map_err(|e| TensorCoreError::Tensor(format!("asymmetric_loss weight_under failed: {}", e)))?;
+    let weight_over = ones.affine(overprediction_weight as f64, 0.0)
+        .map_err(|e| TensorCoreError::Tensor(format!("asymmetric_loss weight_over failed: {}", e)))?;
+
+    let weights = positive_mask.where_cond(&weight_under, &weight_over)
+        .map_err(|e| TensorCoreError::Tensor(format!("asymmetric_loss where_cond failed: {}", e)))?;
+
+    squared.mul(&weights)
+        .map_err(|e| TensorCoreError::Tensor(format!("asymmetric_loss mul failed: {}", e)))
+}
+
 /// Asymmetric MSE loss for reconciliation learning
 ///
 /// Penalizes underprediction (actual > predicted) more heavily than overprediction.
@@ -260,68 +295,22 @@ pub fn asymmetric_mse_loss(
     underprediction_weight: f32,
     overprediction_weight: f32,
 ) -> Result<Tensor> {
-    // Error: actual - predicted
-    let errors = actual.sub(predicted)
-        .map_err(|e| TensorCoreError::Tensor(format!("asymmetric_mse_loss sub failed: {}", e)))?;
-    let squared = errors.sqr()
-        .map_err(|e| TensorCoreError::Tensor(format!("asymmetric_mse_loss sqr failed: {}", e)))?;
-    
-    // Create asymmetric weights based on error sign
-    let zeros = Tensor::zeros_like(&errors)
-        .map_err(|e| TensorCoreError::Tensor(format!("asymmetric_mse_loss zeros failed: {}", e)))?;
-    let positive_mask = errors.gt(&zeros)
-        .map_err(|e| TensorCoreError::Tensor(format!("asymmetric_mse_loss gt failed: {}", e)))?;
-    
-    // Create constant tensors by multiplying ones_like by the weight
-    let ones = Tensor::ones_like(&errors)
-        .map_err(|e| TensorCoreError::Tensor(format!("asymmetric_mse_loss ones failed: {}", e)))?;
-    let weight_under = ones.affine(underprediction_weight as f64, 0.0)
-        .map_err(|e| TensorCoreError::Tensor(format!("asymmetric_mse_loss weight_under failed: {}", e)))?;
-    let weight_over = ones.affine(overprediction_weight as f64, 0.0)
-        .map_err(|e| TensorCoreError::Tensor(format!("asymmetric_mse_loss weight_over failed: {}", e)))?;
-    
-    let weights = positive_mask.where_cond(&weight_under, &weight_over)
-        .map_err(|e| TensorCoreError::Tensor(format!("asymmetric_mse_loss where_cond failed: {}", e)))?;
-    
-    // Weighted loss
-    let asymmetric_loss = squared.mul(&weights)
-        .map_err(|e| TensorCoreError::Tensor(format!("asymmetric_mse_loss mul failed: {}", e)))?;
-    asymmetric_loss.mean_all()
+    asymmetric_loss_core(predicted, actual, underprediction_weight, overprediction_weight)?
+        .mean_all()
         .map_err(|e| TensorCoreError::Tensor(format!("asymmetric_mse_loss mean failed: {}", e)))
 }
 
 /// Per-element asymmetric loss (for analysis, not reduction)
 ///
 /// Returns per-element weighted squared errors without reducing to scalar.
-/// Useful for analyzing per-corridor or per-schedule variance.
+/// Useful for analyzing per-element variance in predictions.
 pub fn asymmetric_loss_per_element(
     predicted: &Tensor,
     actual: &Tensor,
     underprediction_weight: f32,
     overprediction_weight: f32,
 ) -> Result<Tensor> {
-    let errors = actual.sub(predicted)
-        .map_err(|e| TensorCoreError::Tensor(format!("asymmetric_loss_per_element sub failed: {}", e)))?;
-    let squared = errors.sqr()
-        .map_err(|e| TensorCoreError::Tensor(format!("asymmetric_loss_per_element sqr failed: {}", e)))?;
-    
-    let zeros = Tensor::zeros_like(&errors)
-        .map_err(|e| TensorCoreError::Tensor(format!("asymmetric_loss_per_element zeros failed: {}", e)))?;
-    let positive_mask = errors.gt(&zeros)
-        .map_err(|e| TensorCoreError::Tensor(format!("asymmetric_loss_per_element gt failed: {}", e)))?;
-    
-    let ones = Tensor::ones_like(&errors)
-        .map_err(|e| TensorCoreError::Tensor(format!("asymmetric_loss_per_element ones failed: {}", e)))?;
-    let weight_under = ones.affine(underprediction_weight as f64, 0.0)
-        .map_err(|e| TensorCoreError::Tensor(format!("asymmetric_loss_per_element weight_under failed: {}", e)))?;
-    let weight_over = ones.affine(overprediction_weight as f64, 0.0)
-        .map_err(|e| TensorCoreError::Tensor(format!("asymmetric_loss_per_element weight_over failed: {}", e)))?;
-    
-    let weights = positive_mask.where_cond(&weight_under, &weight_over)
-        .map_err(|e| TensorCoreError::Tensor(format!("asymmetric_loss_per_element where_cond failed: {}", e)))?;
-    
-    squared.mul(&weights)
-        .map_err(|e| TensorCoreError::Tensor(format!("asymmetric_loss_per_element mul failed: {}", e)))
+    asymmetric_loss_core(predicted, actual, underprediction_weight, overprediction_weight)
 }
 
 #[cfg(test)]

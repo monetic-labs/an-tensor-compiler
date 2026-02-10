@@ -278,7 +278,9 @@ impl SGDOptimizer {
 
 /// Optimizer enum for flexibility
 pub enum Optimizer {
+    /// Stochastic Gradient Descent optimizer
     SGD(SGDOptimizer),
+    /// Adam optimizer with weight decay (AdamW)
     Adam(AdamOptimizer),
 }
 

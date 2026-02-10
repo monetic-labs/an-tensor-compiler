@@ -1,3 +1,5 @@
+#![warn(missing_docs)]
+
 //! # an-tensor-compiler
 //!
 //! Differentiable neuro-symbolic compiler: symbolic logic rules → GPU-accelerated
@@ -24,10 +26,10 @@
 //! use an_tensor_compiler::prelude::*;
 //!
 //! // Write rules in Prolog-like syntax
-//! let spec = RuleSpec::parse("exit_rules", r#"
-//!     exit(X) :- profit_target(X, 0.02), momentum_shift(X).
-//!     exit(X) :- stop_loss(X, -0.01).
-//!     exit(X) :- regime_change(X), not bullish(X).
+//! let spec = RuleSpec::parse("policy_rules", r#"
+//!     escalate(X) :- high_risk(X), not approved(X).
+//!     escalate(X) :- critical_resource(X), low_confidence(X).
+//!     approve(X) :- all_checks_pass(X), high_confidence(X).
 //! "#)?;
 //!
 //! // Compile to differentiable tensor function
@@ -58,30 +60,39 @@ pub use candle_core::{Device, DType, Tensor, Var};
 /// Error types for tensor compiler operations
 #[derive(Debug, thiserror::Error)]
 pub enum TensorCoreError {
+    /// A tensor operation (matmul, element-wise, etc.) failed
     #[error("Tensor operation failed: {0}")]
     Tensor(String),
 
+    /// Invalid configuration was provided
     #[error("Invalid configuration: {0}")]
     Config(String),
 
+    /// A namespace operation failed (gradient isolation boundary violation, etc.)
     #[error("Namespace error: {0}")]
     Namespace(String),
 
+    /// Rule compilation failed (parsing, validation, or codegen error)
     #[error("Compiler error: {0}")]
     Compiler(String),
 
+    /// A federation operation failed (merge, sync, transport)
     #[error("Federation error: {0}")]
     Federation(String),
 
+    /// Serialization or deserialization failed (safetensors, JSON, etc.)
     #[error("Serialization error: {0}")]
     Serialization(String),
 
+    /// A training operation failed (optimizer step, gradient computation)
     #[error("Training error: {0}")]
     Training(String),
 
+    /// An I/O operation failed
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
+    /// An underlying candle tensor operation failed
     #[error("Candle error: {0}")]
     Candle(#[from] candle_core::Error),
 }
@@ -108,6 +119,8 @@ pub mod prelude {
         // Tensor operations
         cosine_similarity, sigmoid, softmax, relu,
         binary_cross_entropy, mse_loss,
+        // Additional activations
+        leaky_relu, tanh, gelu,
     };
 
     // Namespace

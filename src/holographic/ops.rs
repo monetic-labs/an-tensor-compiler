@@ -11,17 +11,26 @@
 
 use candle_core::{Device, Tensor, DType};
 use crate::{Result, TensorCoreError};
-use std::f32::consts::PI;
 
-/// Bind two tensors via circular convolution
+/// Bind two tensors via approximate circular convolution
 ///
 /// This is the core operation for combining concepts into a hologram.
 /// The result can be unbound later to recover the original concepts.
 ///
+/// # Implementation Note
+///
+/// Uses a **fast approximation** (phase-shifted element-wise multiply) rather than
+/// FFT-based circular convolution. This is significantly faster for high-dimensional
+/// vectors but produces noisier recovery for small dimensions (<256). For most
+/// practical embedding sizes (512+), the approximation is sufficient.
+///
+/// For higher-fidelity binding, an FFT-based implementation can be substituted
+/// by replacing this function — the API contract remains the same.
+///
 /// # Properties
 /// - Associative: (a ⊗ b) ⊗ c = a ⊗ (b ⊗ c)
 /// - Commutative: a ⊗ b = b ⊗ a
-/// - Inverse exists: a ⊗ a⁻¹ ≈ identity
+/// - Approximate inverse: a ⊗ a⁻¹ ≈ identity (exact for orthogonal vectors)
 ///
 /// # Example
 /// ```rust,ignore
@@ -171,20 +180,10 @@ pub fn normalize(tensor: &Tensor) -> Result<Tensor> {
 }
 
 /// Cosine similarity between two tensors
+///
+/// Delegates to [`crate::primitives::cosine_similarity`] for a single implementation.
 pub fn cosine_similarity(a: &Tensor, b: &Tensor) -> Result<f32> {
-    let dot = (a * b)?.sum_all()?;
-    let a_norm = a.sqr()?.sum_all()?.sqrt()?;
-    let b_norm = b.sqr()?.sum_all()?.sqrt()?;
-    
-    let dot_val: f32 = dot.to_scalar()?;
-    let a_val: f32 = a_norm.to_scalar()?;
-    let b_val: f32 = b_norm.to_scalar()?;
-    
-    if a_val < 1e-8 || b_val < 1e-8 {
-        return Ok(0.0);
-    }
-    
-    Ok(dot_val / (a_val * b_val))
+    crate::primitives::cosine_similarity(a, b)
 }
 
 /// Generate sinusoidal position encoding
@@ -241,7 +240,7 @@ pub fn role_encoding(role: &str, dim: usize, device: &Device) -> Result<Tensor> 
         // Simple LCG for reproducibility
         state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
         let normalized = (state as f64 / u64::MAX as f64) as f32;
-        encoding[i] = (normalized * 2.0 - 1.0);  // Range [-1, 1]
+        encoding[i] = normalized * 2.0 - 1.0;  // Range [-1, 1]
     }
     
     // Normalize to unit length
