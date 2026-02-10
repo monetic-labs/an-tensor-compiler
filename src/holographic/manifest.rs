@@ -42,7 +42,7 @@ impl ContextManifest {
     /// Load manifest from file
     pub fn load(path: impl AsRef<Path>) -> Result<Self> {
         let content = std::fs::read_to_string(path.as_ref())
-            .map_err(|e| TensorCoreError::Io(e))?;
+            .map_err(TensorCoreError::Io)?;
         
         toml::from_str(&content)
             .map_err(|e| TensorCoreError::Config(format!("Failed to parse manifest: {}", e)))

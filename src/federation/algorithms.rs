@@ -305,7 +305,7 @@ pub fn trimmed_mean(updates: &[ParticipantUpdate], trim_fraction: f32) -> Result
         ));
     }
 
-    if trim_fraction < 0.0 || trim_fraction >= 0.5 {
+    if !(0.0..0.5).contains(&trim_fraction) {
         return Err(TensorCoreError::Federation(
             "trim_fraction must be in [0, 0.5)".into(),
         ));

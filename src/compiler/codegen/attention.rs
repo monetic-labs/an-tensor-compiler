@@ -33,7 +33,7 @@ impl AttentionParams {
     /// This matches PyTorch's nn.MultiheadAttention default and provides
     /// stable gradients from the first backward pass.
     pub fn new(hidden_dim: usize, num_heads: usize, device: &Device) -> Result<Self> {
-        if hidden_dim % num_heads != 0 {
+        if !hidden_dim.is_multiple_of(num_heads) {
             return Err(TensorCoreError::Compiler(format!(
                 "hidden_dim ({}) must be divisible by num_heads ({})",
                 hidden_dim, num_heads

@@ -427,8 +427,8 @@ mod tests {
                 thread::spawn(move || {
                     // Each thread reads from shared tensor
                     let row = t.narrow(0, i % 10, 1).unwrap();
-                    let sum = row.sum_all().unwrap().to_scalar::<f32>().unwrap();
-                    sum
+                    
+                    row.sum_all().unwrap().to_scalar::<f32>().unwrap()
                 })
             })
             .collect();

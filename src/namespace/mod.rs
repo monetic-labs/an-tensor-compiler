@@ -1478,9 +1478,11 @@ mod tests {
 
     #[test]
     fn test_reserved_namespace_constants() {
-        assert!(TRADING < RESERVED_NAMESPACE_MAX);
-        assert!(PIPELINE < RESERVED_NAMESPACE_MAX);
-        assert!(CHAT < RESERVED_NAMESPACE_MAX);
+        // Verify well-known IDs are within reserved range
+        let well_known = [TRADING, PIPELINE, CHAT];
+        for id in well_known {
+            assert!(id <= RESERVED_NAMESPACE_MAX, "ID {} exceeds reserved range", id);
+        }
         assert_eq!(DYNAMIC_NAMESPACE_START, 100);
     }
 

@@ -37,10 +37,12 @@ use crate::{Result, TensorCoreError};
 /// Each strategy defines how to combine two versions of the same tensor.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "strategy", rename_all = "snake_case")]
+#[derive(Default)]
 pub enum TensorMergeStrategy {
     /// Last writer wins (by timestamp).
     ///
     /// Simple but may lose concurrent updates.
+    #[default]
     LastWriterWins,
 
     /// Element-wise maximum.
@@ -76,11 +78,6 @@ pub enum TensorMergeStrategy {
     },
 }
 
-impl Default for TensorMergeStrategy {
-    fn default() -> Self {
-        Self::LastWriterWins
-    }
-}
 
 // ============================================================================
 // Vector Clock

@@ -350,11 +350,14 @@ pub fn sparse_coo_to_dense(
         .map_err(|e| TensorCoreError::Tensor(format!("create dense tensor failed: {}", e)))
 }
 
+/// Result of detecting sparse COO format inputs
+pub type SparseCooDetection<'a> = (&'a Tensor, &'a Tensor, Option<&'a Tensor>, (usize, usize));
+
 /// Check if sparse COO inputs are present for a given adjacency name
 pub fn detect_sparse_coo<'a>(
     inputs: &'a HashMap<String, Tensor>,
     adjacency_name: &str,
-) -> Option<(&'a Tensor, &'a Tensor, Option<&'a Tensor>, (usize, usize))> {
+) -> Option<SparseCooDetection<'a>> {
     let row_key = format!("{}_row_indices", adjacency_name);
     let col_key = format!("{}_col_indices", adjacency_name);
     let shape_key = format!("{}_shape", adjacency_name);

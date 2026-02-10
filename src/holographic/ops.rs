@@ -110,9 +110,9 @@ fn approximate_inverse(tensor: &Tensor) -> Result<Tensor> {
     let mut inverse = vec![0.0f32; dim];
     inverse[0] = values[0];
     
-    for i in 1..dim {
+    for (i, inv) in inverse.iter_mut().enumerate().skip(1) {
         let j = dim - i;
-        inverse[i] = values[j];
+        *inv = values[j];
     }
     
     Tensor::from_vec(inverse, flat.dims(), flat.device())
@@ -195,7 +195,7 @@ pub fn cosine_similarity(a: &Tensor, b: &Tensor) -> Result<f32> {
 /// - `dim`: Embedding dimension (must be even)
 /// - `device`: Device for tensor creation
 pub fn position_encoding(position: usize, dim: usize, device: &Device) -> Result<Tensor> {
-    if dim % 2 != 0 {
+    if !dim.is_multiple_of(2) {
         return Err(TensorCoreError::Tensor(
             "Position encoding dimension must be even".into()
         ));
@@ -236,11 +236,11 @@ pub fn role_encoding(role: &str, dim: usize, device: &Device) -> Result<Tensor> 
     let mut encoding = vec![0.0f32; dim];
     let mut state = seed;
     
-    for i in 0..dim {
+    for val in &mut encoding {
         // Simple LCG for reproducibility
         state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
         let normalized = (state as f64 / u64::MAX as f64) as f32;
-        encoding[i] = normalized * 2.0 - 1.0;  // Range [-1, 1]
+        *val = normalized * 2.0 - 1.0;  // Range [-1, 1]
     }
     
     // Normalize to unit length

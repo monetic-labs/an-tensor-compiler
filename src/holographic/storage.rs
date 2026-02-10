@@ -43,7 +43,7 @@ impl TensorStore {
     pub fn save_organism(&self, organism: &OrganismTensor) -> Result<()> {
         let dir = self.base_path.join(&organism.project_id);
         std::fs::create_dir_all(&dir)
-            .map_err(|e| TensorCoreError::Io(e))?;
+            .map_err(TensorCoreError::Io)?;
         
         // Save main organism hologram
         let organism_path = dir.join("organism.safetensors");
@@ -64,14 +64,14 @@ impl TensorStore {
         let metadata_json = serde_json::to_string_pretty(&metadata)
             .map_err(|e| TensorCoreError::Serialization(e.to_string()))?;
         std::fs::write(&metadata_path, metadata_json)
-            .map_err(|e| TensorCoreError::Io(e))?;
+            .map_err(TensorCoreError::Io)?;
         
         // Save boundaries
         let boundaries_path = dir.join("boundaries.json");
         let boundaries_json = serde_json::to_string_pretty(&organism.boundaries)
             .map_err(|e| TensorCoreError::Serialization(e.to_string()))?;
         std::fs::write(&boundaries_path, boundaries_json)
-            .map_err(|e| TensorCoreError::Io(e))?;
+            .map_err(TensorCoreError::Io)?;
         
         // Save each context
         for ctx in &organism.contexts {
@@ -85,7 +85,7 @@ impl TensorStore {
     fn save_context(&self, ctx: &BoundedContextTensor, base_dir: &Path) -> Result<()> {
         let ctx_dir = base_dir.join("contexts").join(&ctx.name);
         std::fs::create_dir_all(&ctx_dir)
-            .map_err(|e| TensorCoreError::Io(e))?;
+            .map_err(TensorCoreError::Io)?;
         
         // Save context hologram
         let hologram_path = ctx_dir.join("hologram.safetensors");
@@ -105,7 +105,7 @@ impl TensorStore {
         let meta_json = serde_json::to_string_pretty(&ctx_meta)
             .map_err(|e| TensorCoreError::Serialization(e.to_string()))?;
         std::fs::write(&meta_path, meta_json)
-            .map_err(|e| TensorCoreError::Io(e))?;
+            .map_err(TensorCoreError::Io)?;
         
         // Save module holograms (batched into one file)
         let mut module_tensors = HashMap::new();
@@ -156,7 +156,7 @@ impl TensorStore {
         let index_json = serde_json::to_string_pretty(&component_index)
             .map_err(|e| TensorCoreError::Serialization(e.to_string()))?;
         std::fs::write(&index_path, index_json)
-            .map_err(|e| TensorCoreError::Io(e))?;
+            .map_err(TensorCoreError::Io)?;
         
         Ok(())
     }
@@ -174,7 +174,7 @@ impl TensorStore {
         // Load metadata
         let metadata_path = dir.join("metadata.json");
         let metadata_json = std::fs::read_to_string(&metadata_path)
-            .map_err(|e| TensorCoreError::Io(e))?;
+            .map_err(TensorCoreError::Io)?;
         let metadata: OrganismMetadata = serde_json::from_str(&metadata_json)
             .map_err(|e| TensorCoreError::Serialization(e.to_string()))?;
         
@@ -182,7 +182,7 @@ impl TensorStore {
         let boundaries_path = dir.join("boundaries.json");
         let boundaries: BoundaryRules = if boundaries_path.exists() {
             let json = std::fs::read_to_string(&boundaries_path)
-                .map_err(|e| TensorCoreError::Io(e))?;
+                .map_err(TensorCoreError::Io)?;
             serde_json::from_str(&json)
                 .map_err(|e| TensorCoreError::Serialization(e.to_string()))?
         } else {
@@ -223,7 +223,7 @@ impl TensorStore {
         // Load metadata
         let meta_path = ctx_dir.join("metadata.json");
         let meta_json = std::fs::read_to_string(&meta_path)
-            .map_err(|e| TensorCoreError::Io(e))?;
+            .map_err(TensorCoreError::Io)?;
         let meta: ContextMetadata = serde_json::from_str(&meta_json)
             .map_err(|e| TensorCoreError::Serialization(e.to_string()))?;
         
@@ -232,13 +232,13 @@ impl TensorStore {
         let hologram = self.load_tensor(&hologram_path)?;
         
         // Parse role
-        let role = ContextRole::from_str(&meta.role).unwrap_or(ContextRole::Utility);
+        let role = ContextRole::parse(&meta.role).unwrap_or(ContextRole::Utility);
         
         // Load component index
         let index_path = ctx_dir.join("components.json");
         let component_index: Vec<ComponentIndexEntry> = if index_path.exists() {
             let json = std::fs::read_to_string(&index_path)
-                .map_err(|e| TensorCoreError::Io(e))?;
+                .map_err(TensorCoreError::Io)?;
             serde_json::from_str(&json)
                 .map_err(|e| TensorCoreError::Serialization(e.to_string()))?
         } else {
@@ -309,7 +309,7 @@ impl TensorStore {
                     };
                     
                     // Use the hologram as semantic, or create zero tensors for others
-                    let dim = comp_hologram.dims().get(0).copied().unwrap_or(1024);
+                    let dim = comp_hologram.dims().first().copied().unwrap_or(1024);
                     let zero_tensor = Tensor::zeros((dim,), candle_core::DType::F32, &self.device)
                         .unwrap_or(comp_hologram.clone());
                     
@@ -370,14 +370,14 @@ impl TensorStore {
     /// Load multiple named tensors from a safetensors file
     fn load_named_tensors(&self, path: &Path) -> Result<HashMap<String, Tensor>> {
         let data = std::fs::read(path)
-            .map_err(|e| TensorCoreError::Io(e))?;
+            .map_err(TensorCoreError::Io)?;
         
         let tensors = SafeTensors::deserialize(&data)
             .map_err(|e| TensorCoreError::Serialization(e.to_string()))?;
         
         let mut result = HashMap::new();
         for name in tensors.names() {
-            let view = tensors.tensor(&name)
+            let view = tensors.tensor(name)
                 .map_err(|e| TensorCoreError::Serialization(e.to_string()))?;
             
             let shape: Vec<usize> = view.shape().to_vec();
@@ -444,7 +444,7 @@ impl TensorStore {
     /// Load a single tensor
     fn load_tensor(&self, path: &Path) -> Result<Tensor> {
         let data = std::fs::read(path)
-            .map_err(|e| TensorCoreError::Io(e))?;
+            .map_err(TensorCoreError::Io)?;
         
         let tensors = SafeTensors::deserialize(&data)
             .map_err(|e| TensorCoreError::Serialization(e.to_string()))?;
@@ -473,9 +473,9 @@ impl TensorStore {
         }
         
         for entry in std::fs::read_dir(&self.base_path)
-            .map_err(|e| TensorCoreError::Io(e))?
+            .map_err(TensorCoreError::Io)?
         {
-            let entry = entry.map_err(|e| TensorCoreError::Io(e))?;
+            let entry = entry.map_err(TensorCoreError::Io)?;
             let path = entry.path();
             
             if path.is_dir() && path.join("organism.safetensors").exists() {
@@ -548,7 +548,7 @@ impl ComponentCache {
     /// Compute content hash for a file
     pub fn hash_file(path: &Path) -> Result<String> {
         let content = std::fs::read(path)
-            .map_err(|e| TensorCoreError::Io(e))?;
+            .map_err(TensorCoreError::Io)?;
         let mut hasher = Sha256::new();
         hasher.update(&content);
         Ok(format!("{:x}", hasher.finalize()))
@@ -580,12 +580,12 @@ impl ComponentCache {
         embedding_mode: &str,
     ) -> Result<()> {
         std::fs::create_dir_all(&self.cache_dir)
-            .map_err(|e| TensorCoreError::Io(e))?;
+            .map_err(TensorCoreError::Io)?;
         
         // Save each component's hologram
         let hash_dir = self.cache_dir.join(&content_hash[..8]);
         std::fs::create_dir_all(&hash_dir)
-            .map_err(|e| TensorCoreError::Io(e))?;
+            .map_err(TensorCoreError::Io)?;
         
         let mut tensors_data: HashMap<String, Vec<f32>> = HashMap::new();
         let mut shapes: HashMap<String, Vec<usize>> = HashMap::new();
@@ -646,7 +646,7 @@ impl ComponentCache {
         }
         
         let data = std::fs::read(&tensor_path)
-            .map_err(|e| TensorCoreError::Io(e))?;
+            .map_err(TensorCoreError::Io)?;
         let tensors = SafeTensors::deserialize(&data)
             .map_err(|e| TensorCoreError::Serialization(e.to_string()))?;
         
@@ -689,7 +689,7 @@ impl ComponentCache {
     pub fn clear(&mut self) -> Result<()> {
         if self.cache_dir.exists() {
             std::fs::remove_dir_all(&self.cache_dir)
-                .map_err(|e| TensorCoreError::Io(e))?;
+                .map_err(TensorCoreError::Io)?;
         }
         self.index.clear();
         Ok(())
@@ -703,7 +703,7 @@ impl ComponentCache {
         }
         
         let json = std::fs::read_to_string(&index_path)
-            .map_err(|e| TensorCoreError::Io(e))?;
+            .map_err(TensorCoreError::Io)?;
         serde_json::from_str(&json)
             .map_err(|e| TensorCoreError::Serialization(e.to_string()))
     }
@@ -711,13 +711,13 @@ impl ComponentCache {
     /// Save index to disk
     fn save_index(&self) -> Result<()> {
         std::fs::create_dir_all(&self.cache_dir)
-            .map_err(|e| TensorCoreError::Io(e))?;
+            .map_err(TensorCoreError::Io)?;
         
         let index_path = self.cache_dir.join("index.json");
         let json = serde_json::to_string_pretty(&self.index)
             .map_err(|e| TensorCoreError::Serialization(e.to_string()))?;
         std::fs::write(&index_path, json)
-            .map_err(|e| TensorCoreError::Io(e))
+            .map_err(TensorCoreError::Io)
     }
 }
 
@@ -797,11 +797,11 @@ impl IncrementalState {
     pub fn save_commit(&self, root: &Path) -> Result<()> {
         let state_dir = root.join(".an-ecosystem");
         std::fs::create_dir_all(&state_dir)
-            .map_err(|e| TensorCoreError::Io(e))?;
+            .map_err(TensorCoreError::Io)?;
         
         let commit_file = state_dir.join("last_encoded_commit");
         std::fs::write(&commit_file, &self.current_commit)
-            .map_err(|e| TensorCoreError::Io(e))
+            .map_err(TensorCoreError::Io)
     }
     
     /// Load previous commit from state file
@@ -809,7 +809,7 @@ impl IncrementalState {
         let commit_file = root.join(".an-ecosystem/last_encoded_commit");
         if commit_file.exists() {
             let commit = std::fs::read_to_string(&commit_file)
-                .map_err(|e| TensorCoreError::Io(e))?;
+                .map_err(TensorCoreError::Io)?;
             Ok(Some(commit.trim().to_string()))
         } else {
             Ok(None)
@@ -903,7 +903,7 @@ fn get_all_rust_files(root: &Path) -> Result<HashSet<PathBuf>> {
                 .filter_map(|e| e.ok())
             {
                 let path = entry.path();
-                if path.extension().map_or(false, |ext| ext == "rs")
+                if path.extension().is_some_and(|ext| ext == "rs")
                     && !path.to_string_lossy().contains("/target/")
                 {
                     files.insert(path.to_path_buf());

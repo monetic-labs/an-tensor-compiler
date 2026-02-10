@@ -1087,7 +1087,7 @@ fn compute_spec_hash(spec: &RuleSpec) -> String {
         }
     }
     
-    for (name, _spec) in &spec.predicates {
+    for name in spec.predicates.keys() {
         name.hash(&mut hasher);
     }
     
@@ -1706,7 +1706,7 @@ mod tests {
         // Each head has 1 learned predicate with dim 4: weights(4x1) + bias(1) = 5 params
         // Total: 10 params (but predicates are duplicated per head in current impl)
         assert!(multi.param_count() > 0);
-        assert!(multi.trainable_vars().len() > 0);
+        assert!(!multi.trainable_vars().is_empty());
     }
 
     #[test]

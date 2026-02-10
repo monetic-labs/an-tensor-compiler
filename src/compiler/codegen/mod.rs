@@ -1030,10 +1030,8 @@ impl CompiledRuleSet {
     /// * `max_val` - Maximum absolute value for attention weights (recommended: 10.0)
     pub fn clamp_attention_weights(&self, max_val: f32) -> Result<()> {
         for predicate in &self.predicates {
-            if let CompiledPredicate::LearnedProjection { attention, .. } = predicate {
-                if let Some(attn_params) = attention {
+            if let CompiledPredicate::LearnedProjection { attention: Some(attn_params), .. } = predicate {
                     attn_params.clamp_weights(max_val)?;
-                }
             }
         }
         Ok(())
@@ -1688,7 +1686,7 @@ mod tests {
         
         // Output should be in [0, 1] (sigmoid output)
         let result = output.output.flatten_all().unwrap().to_vec1::<f32>().unwrap()[0];
-        assert!(result >= 0.0 && result <= 1.0);
+        assert!((0.0..=1.0).contains(&result));
         assert!(output.explanation.contains("intent_score"));
     }
 
@@ -1728,7 +1726,7 @@ mod tests {
 
         let output = compiled.forward(&inputs).unwrap();
         let result = output.output.flatten_all().unwrap().to_vec1::<f32>().unwrap()[0];
-        assert!(result >= 0.0 && result <= 1.0);
+        assert!((0.0..=1.0).contains(&result));
     }
 
     // =========================================================================
@@ -1787,7 +1785,7 @@ mod tests {
 
         let output = compiled.forward(&inputs).unwrap();
         let result = output.output.flatten_all().unwrap().to_vec1::<f32>().unwrap()[0];
-        assert!(result >= 0.0 && result <= 1.0);
+        assert!((0.0..=1.0).contains(&result));
     }
 
     #[test]
@@ -1858,7 +1856,7 @@ mod tests {
 
         let output = compiled.forward(&inputs).unwrap();
         let result = output.output.flatten_all().unwrap().to_vec1::<f32>().unwrap()[0];
-        assert!(result >= 0.0 && result <= 1.0);
+        assert!((0.0..=1.0).contains(&result));
     }
 
     // =========================================================================
@@ -2172,7 +2170,7 @@ mod tests {
         
         // Should produce a valid output
         let result = output.output.flatten_all().unwrap().to_vec1::<f32>().unwrap()[0];
-        assert!(result >= 0.0 && result <= 1.0);
+        assert!((0.0..=1.0).contains(&result));
         
         // Should have trainable params from LearnedSimilarity
         assert!(compiled.param_count() > 0);
@@ -2221,7 +2219,7 @@ mod tests {
 
         let output = compiled.forward(&inputs).unwrap();
         let result = output.output.flatten_all().unwrap().to_vec1::<f32>().unwrap()[0];
-        assert!(result >= 0.0 && result <= 1.0);
+        assert!((0.0..=1.0).contains(&result));
     }
 
     #[test]
@@ -2255,7 +2253,7 @@ mod tests {
 
         let output = compiled.forward(&inputs).unwrap();
         let result = output.output.flatten_all().unwrap().to_vec1::<f32>().unwrap()[0];
-        assert!(result >= 0.0 && result <= 1.0);
+        assert!((0.0..=1.0).contains(&result));
     }
 
     #[test]
@@ -2292,7 +2290,7 @@ mod tests {
 
         let output = compiled.forward(&inputs).unwrap();
         let result = output.output.flatten_all().unwrap().to_vec1::<f32>().unwrap()[0];
-        assert!(result >= 0.0 && result <= 1.0);
+        assert!((0.0..=1.0).contains(&result));
     }
 
     #[test]
@@ -2334,7 +2332,7 @@ mod tests {
 
         let output = compiled.forward(&inputs).unwrap();
         let result = output.output.flatten_all().unwrap().to_vec1::<f32>().unwrap()[0];
-        assert!(result >= 0.0 && result <= 1.0);
+        assert!((0.0..=1.0).contains(&result));
     }
 
     #[test]
@@ -2375,7 +2373,7 @@ mod tests {
 
         let output = compiled.forward(&inputs).unwrap();
         let result = output.output.flatten_all().unwrap().to_vec1::<f32>().unwrap()[0];
-        assert!(result >= 0.0 && result <= 1.0);
+        assert!((0.0..=1.0).contains(&result));
     }
 
     #[test]
@@ -2413,7 +2411,7 @@ mod tests {
 
         let output = compiled.forward(&inputs).unwrap();
         let result = output.output.flatten_all().unwrap().to_vec1::<f32>().unwrap()[0];
-        assert!(result >= 0.0 && result <= 1.0);
+        assert!((0.0..=1.0).contains(&result));
     }
 
     #[test]
@@ -2451,7 +2449,7 @@ mod tests {
         
         assert_eq!(results.len(), 4);
         for result in results {
-            assert!(result >= 0.0 && result <= 1.0);
+            assert!((0.0..=1.0).contains(&result));
         }
     }
 

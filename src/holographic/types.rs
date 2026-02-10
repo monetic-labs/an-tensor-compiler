@@ -189,8 +189,8 @@ impl ContextRole {
         }
     }
     
-    /// Parse from string
-    pub fn from_str(s: &str) -> Option<Self> {
+    /// Parse from a role string
+    pub fn parse(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "core" => Some(Self::Core),
             "support" => Some(Self::Support),
@@ -434,8 +434,8 @@ impl OrganismTensor {
                     .any(|m| m.path.contains(item) || 
                          m.components.iter().any(|c| c.id.name == *item));
                 
-                if item_in_ctx && ctx.name != from_context {
-                    if !self.boundaries.can_depend(from_context, &ctx.name) {
+                if item_in_ctx && ctx.name != from_context
+                    && !self.boundaries.can_depend(from_context, &ctx.name) {
                         violations.push(BoundaryViolation {
                             from_context: from_context.to_string(),
                             to_context: ctx.name.clone(),
@@ -446,7 +446,6 @@ impl OrganismTensor {
                             ),
                         });
                     }
-                }
             }
         }
         
