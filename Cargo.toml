@@ -1,0 +1,56 @@
+[package]
+name = "an-tensor-compiler"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+authors = ["an-ecosystem team"]
+description = "Differentiable neuro-symbolic compiler: symbolic logic rules → GPU-accelerated tensor equations with full gradient flow"
+repository = "https://github.com/monetic-labs/an-tensor-compiler"
+keywords = ["tensor-logic", "neuro-symbolic", "fuzzy-logic", "differentiable-programming", "holographic"]
+categories = ["science", "algorithms", "mathematics"]
+
+[features]
+default = []
+metal = ["candle-core/metal", "candle-nn/metal"]
+cuda = ["candle-core/cuda", "candle-nn/cuda"]
+
+[dependencies]
+# Tensor/ML
+candle-core = "0.9"
+candle-nn = "0.9"
+safetensors = "0.4"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Error handling
+thiserror = "1.0"
+
+# Parsing (for rule DSL)
+nom = "7.1"
+
+# Async (for federation transport trait)
+async-trait = "0.1"
+anyhow = "1.0"
+
+# Logging
+tracing = "0.1"
+
+# Utilities
+uuid = { version = "1.6", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+parking_lot = "0.12"
+rand = "0.8"
+sha2 = "0.10"
+bytemuck = { version = "1.24", features = ["derive"] }
+toml = "0.9"
+walkdir = "2.4"
+
+[dev-dependencies]
+tempfile = "3.10"
+proptest = "1.4"
+
+[lib]
+name = "an_tensor_compiler"
+path = "src/lib.rs"

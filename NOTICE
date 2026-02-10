@@ -1,0 +1,31 @@
+an-tensor-compiler
+Copyright 2026 Monetic Labs
+
+This product includes software developed at Monetic Labs.
+
+This work draws on ideas from several fields and researchers:
+
+NEURO-SYMBOLIC AI & TENSOR LOGIC
+  Pedro Domingos — "Every Model Learned by Gradient Descent Is Approximately
+  a Kernel Machine" (arXiv:2012.00152) and foundational work on unifying
+  logical and statistical AI. The Tensor Logic compiler's approach to
+  compiling symbolic rules into differentiable tensor equations is directly
+  informed by Domingos' research on bridging symbolic and subsymbolic systems.
+
+FUZZY LOGIC
+  Lotfi Zadeh — Fuzzy sets and fuzzy logic (1965). The differentiable
+  fuzzy operators (AND, OR, NOT, IMPLIES) that form the foundation of
+  the rule compiler are grounded in Zadeh's continuous-valued logic.
+
+HOLOGRAPHIC REDUCED REPRESENTATIONS
+  Tony Plate — "Holographic Reduced Representations" (1995). The HRR
+  module implements Plate's circular convolution binding and correlation
+  unbinding for distributed representations of structured information.
+
+BIOMIMICRY & NATURAL SYSTEMS
+  The architecture of this project draws from biological patterns not as
+  metaphor, but as structural principle. Organisms, bounded contexts,
+  federation, holographic memory, and gradient isolation reflect how
+  biological systems achieve robustness through composition, locality,
+  and distributed representation. We study natural systems to find
+  paradigms that actually work, not to borrow aesthetics.
