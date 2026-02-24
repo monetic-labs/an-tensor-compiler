@@ -526,27 +526,95 @@ impl CompiledPredicate {
                 // Message passing layers
                 let mut h = node_features.clone();
                 for (w_self, w_neighbor, bias) in layers {
-                    // Self transform
+                    // Self transform: H @ W_self
                     let h_self = h.matmul(w_self.as_tensor()).map_err(|e| {
                         TensorCoreError::Tensor(format!("matmul self failed: {}", e))
                     })?;
 
-                    // Neighbor aggregation: A @ H @ W_neighbor
-                    let h_neighbor = adj_norm
-                        .matmul(&h)
-                        .map_err(|e| TensorCoreError::Tensor(format!("adj matmul failed: {}", e)))?
-                        .matmul(w_neighbor.as_tensor())
-                        .map_err(|e| {
-                            TensorCoreError::Tensor(format!("matmul neighbor failed: {}", e))
-                        })?;
+                    // Neighbor aggregation (strategy-dependent)
+                    let h_neighbor = match aggregation {
+                        super::Aggregation::Max => {
+                            // Element-wise max pooling over neighbors.
+                            // For each node i: h_agg[i] = max over j∈N(i) of h[j]
+                            // Computed as: expand h[j] per neighbor, zero non-edges, take max.
+                            let n = h.dims()[0];
+                            let feat = h.dims()[1];
 
-                    // Combine and apply non-linearity
+                            // adj_norm here is raw adjacency (no normalization for Max)
+                            // Expand H to [N, N, feat]: h_j for each (i,j) pair
+                            let h_expanded = h
+                                .unsqueeze(0)
+                                .map_err(|e| {
+                                    TensorCoreError::Tensor(format!(
+                                        "max expand unsqueeze failed: {}",
+                                        e
+                                    ))
+                                })?
+                                .expand(&[n, n, feat])
+                                .map_err(|e| {
+                                    TensorCoreError::Tensor(format!("max expand failed: {}", e))
+                                })?;
+
+                            // Mask: adj [N,N] → [N,N,1], zero out non-neighbors
+                            let adj_mask = adj_norm.unsqueeze(2).map_err(|e| {
+                                TensorCoreError::Tensor(format!("max adj unsqueeze failed: {}", e))
+                            })?;
+
+                            let neg_inf = Tensor::full(f32::NEG_INFINITY, (n, n, feat), device)
+                                .map_err(|e| {
+                                    TensorCoreError::Tensor(format!("max neg_inf failed: {}", e))
+                                })?;
+                            let adj_bool = adj_mask.gt(0.0f64).map_err(|e| {
+                                TensorCoreError::Tensor(format!("max adj_bool failed: {}", e))
+                            })?;
+                            let h_masked =
+                                adj_bool.where_cond(&h_expanded, &neg_inf).map_err(|e| {
+                                    TensorCoreError::Tensor(format!("max where_cond failed: {}", e))
+                                })?;
+
+                            // Max over neighbor dimension → [N, feat]
+                            let h_max = h_masked.max(1).map_err(|e| {
+                                TensorCoreError::Tensor(format!("max reduce failed: {}", e))
+                            })?;
+
+                            // Replace -inf (isolated nodes) with 0
+                            let zeros_2d = Tensor::zeros_like(&h_max).map_err(|e| {
+                                TensorCoreError::Tensor(format!("max zeros_2d failed: {}", e))
+                            })?;
+                            let is_neg_inf = h_max.lt(-1e30_f64).map_err(|e| {
+                                TensorCoreError::Tensor(format!("max lt failed: {}", e))
+                            })?;
+                            let h_agg = is_neg_inf.where_cond(&zeros_2d, &h_max).map_err(|e| {
+                                TensorCoreError::Tensor(format!("max fill failed: {}", e))
+                            })?;
+
+                            h_agg.matmul(w_neighbor.as_tensor()).map_err(|e| {
+                                TensorCoreError::Tensor(format!("max matmul W failed: {}", e))
+                            })?
+                        }
+                        _ => {
+                            // Mean / Sum / Attention: A_norm @ H @ W_neighbor
+                            adj_norm
+                                .matmul(&h)
+                                .map_err(|e| {
+                                    TensorCoreError::Tensor(format!("adj matmul failed: {}", e))
+                                })?
+                                .matmul(w_neighbor.as_tensor())
+                                .map_err(|e| {
+                                    TensorCoreError::Tensor(format!(
+                                        "matmul neighbor failed: {}",
+                                        e
+                                    ))
+                                })?
+                        }
+                    };
+
+                    // Combine self + neighbor and apply non-linearity
                     h = (&h_self + &h_neighbor)
                         .map_err(|e| TensorCoreError::Tensor(format!("add failed: {}", e)))?
                         .broadcast_add(bias.as_tensor())
                         .map_err(|e| TensorCoreError::Tensor(format!("add bias failed: {}", e)))?;
 
-                    // ReLU activation
                     h = h
                         .relu()
                         .map_err(|e| TensorCoreError::Tensor(format!("relu failed: {}", e)))?;

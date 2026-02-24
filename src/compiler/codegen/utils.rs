@@ -279,22 +279,24 @@ pub(crate) fn l2_normalize(x: &Tensor) -> Result<Tensor> {
         .map_err(|e| TensorCoreError::Tensor(format!("div failed: {}", e)))
 }
 
-/// Normalize adjacency matrix based on aggregation method
+/// Normalize adjacency matrix for the given aggregation strategy.
+///
+/// - **Mean**: Row-normalize `D⁻¹A` — each row sums to 1.0
+/// - **Sum**: No normalization (raw adjacency weights passed through)
+/// - **Max**: No normalization (max is applied element-wise at aggregation time)
+/// - **Attention**: Symmetric GCN normalization `D⁻¹/²(A+I)D⁻¹/²` as the
+///   base; learned attention weights modulate on top of this
 pub(crate) fn normalize_adjacency(
     adj: &Tensor,
     aggregation: super::super::Aggregation,
     _device: &Device,
 ) -> Result<Tensor> {
     match aggregation {
-        super::super::Aggregation::Mean | super::super::Aggregation::Attention => {
-            let degree = adj
-                .sum_keepdim(1)
-                .map_err(|e| TensorCoreError::Tensor(format!("sum failed: {}", e)))?;
-            let degree = degree
-                .affine(1.0, 1e-8)
-                .map_err(|e| TensorCoreError::Tensor(format!("affine failed: {}", e)))?;
-            adj.broadcast_div(&degree)
-                .map_err(|e| TensorCoreError::Tensor(format!("div failed: {}", e)))
+        super::super::Aggregation::Mean => crate::primitives::gnn::row_normalize(adj),
+        super::super::Aggregation::Attention => {
+            // Symmetric normalization: D⁻¹/²(A+I)D⁻¹/²
+            // Attention weights are multiplied on top at aggregation time.
+            crate::primitives::gnn::symmetric_normalize(adj, true)
         }
         super::super::Aggregation::Sum | super::super::Aggregation::Max => Ok(adj.clone()),
     }

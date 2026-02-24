@@ -16,9 +16,11 @@
 //! - Fuzzy logic operators (AND, OR, NOT, IMPLIES)
 //! - Core tensor operations (matmul, cosine similarity)
 //! - Activation functions (sigmoid, softmax, relu)
+//! - [`gnn`]: Graph neural network layers (GraphSAGE, GCN, GAT)
 
 mod activations;
 mod fuzzy_ops;
+pub mod gnn;
 mod tensor_ops;
 
 // Re-export all primitives at module level

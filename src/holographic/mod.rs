@@ -54,7 +54,19 @@ pub mod types;
 
 // Core operations
 pub use ops::{
-    bind, cosine_similarity, position_encoding, project, role_encoding, superimpose, unbind,
+    // FFT-based (mathematically correct, Plate 1995)
+    bind,
+    // Fast approximation (~3x faster, lower fidelity — pair together)
+    bind_fast,
+    cosine_similarity,
+    normalize,
+    position_encoding,
+    project,
+    role_encoding,
+    // Composition and utilities
+    superimpose,
+    unbind,
+    unbind_fast,
 };
 
 // Type hierarchy

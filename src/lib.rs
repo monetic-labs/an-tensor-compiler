@@ -140,6 +140,12 @@ pub mod prelude {
         with_gpu_sync,
     };
 
+    // GNN primitives
+    pub use crate::primitives::gnn::{
+        gat_layer, gcn_layer, global_max_pool, global_mean_pool, global_sum_pool, message_passing,
+        multi_head_gat, row_normalize, sage_layer, symmetric_normalize,
+    };
+
     // Namespace
     pub use crate::namespace::{
         NamespaceId, NamespaceRegistry, NamespacedTensor, CHAT, PIPELINE, TRADING,
