@@ -6,7 +6,7 @@ license = "GPL-3.0-only"
 authors = ["an-ecosystem team"]
 description = "Differentiable neuro-symbolic compiler: symbolic logic rules → tensor equations with full gradient flow. Optional GPU acceleration via Metal/CUDA."
 repository = "https://github.com/monetic-labs/an-tensor-compiler"
-keywords = ["tensor-logic", "neuro-symbolic", "fuzzy-logic", "differentiable-programming", "holographic"]
+keywords = ["tensor-logic", "neuro-symbolic", "fuzzy-logic", "differentiable", "holographic"]
 categories = ["science", "algorithms", "mathematics"]
 
 [features]
