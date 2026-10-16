@@ -51,6 +51,7 @@
 pub mod codegen;
 pub mod inference;
 pub mod parser;
+pub mod predicate_builders;
 pub mod validation;
 
 use serde::{Deserialize, Serialize};
@@ -265,8 +266,8 @@ pub enum PredicateSpec {
     /// Learned projection: high-dim embedding → scalar predicate
     ///
     /// Replaces MLPs for embedding-to-predicate conversion.
-    /// Architecture: `input → Linear(hidden_dim) → LayerNorm → activation → Dropout →
-    ///               Attention → Linear(1) → sigmoid`
+    /// Architecture: input → Linear(hidden_dim) → \[LayerNorm\] → activation → \[Dropout\] →
+    ///               \[Attention\] → Linear(1) → sigmoid
     ///
     /// # Example
     /// ```ignore
@@ -439,7 +440,7 @@ pub enum PredicateSpec {
     /// }
     /// ```
     PairwiseDifference {
-        /// Input tensor name (shape `[N]` for N items to compare)
+        /// Input tensor name (shape \[N\] for N items to compare)
         input: String,
         /// Threshold percentage for significant difference
         threshold_pct: f32,
@@ -529,15 +530,19 @@ pub enum Activation {
 
 impl Activation {
     /// Apply this activation function to a tensor
-    ///
-    /// Routes to the corresponding implementation in [`crate::primitives`].
-    pub fn apply(&self, tensor: &candle_core::Tensor) -> crate::Result<candle_core::Tensor> {
+    pub fn apply(&self, x: &candle_core::Tensor) -> crate::Result<candle_core::Tensor> {
         match self {
-            Self::ReLU => crate::primitives::relu(tensor),
-            Self::GELU => crate::primitives::gelu(tensor),
-            Self::Sigmoid => crate::primitives::sigmoid(tensor),
-            Self::Tanh => crate::primitives::tanh(tensor),
-            Self::None => Ok(tensor.clone()),
+            Activation::ReLU => x
+                .relu()
+                .map_err(|e| crate::TensorCoreError::Tensor(format!("relu failed: {}", e))),
+            Activation::GELU => x
+                .gelu()
+                .map_err(|e| crate::TensorCoreError::Tensor(format!("gelu failed: {}", e))),
+            Activation::Sigmoid => crate::primitives::sigmoid(x),
+            Activation::Tanh => x
+                .tanh()
+                .map_err(|e| crate::TensorCoreError::Tensor(format!("tanh failed: {}", e))),
+            Activation::None => Ok(x.clone()),
         }
     }
 }
@@ -573,7 +578,7 @@ pub enum SimilarityMethod {
     /// Most flexible, learns what "similar" means
     #[default]
     Learned,
-    /// Cosine similarity: `a·b / (|a||b|) → [0,1]`
+    /// Cosine similarity: a·b / (|a||b|) → \[0,1\]
     Cosine,
     /// Normalized dot product
     DotNormalized,
@@ -924,73 +929,86 @@ impl CompiledRule {
             ));
         }
 
-        // Collect tensors with named keys into HashMap
-        let tensors: std::collections::HashMap<String, candle_core::Tensor> = vars
-            .iter()
-            .enumerate()
-            .map(|(i, v)| (format!("param_{}", i), v.as_tensor().clone()))
-            .collect();
+        // Extract tensor data to CPU Vec<f32> for safetensors serialization
+        let mut tensor_data: Vec<(String, Vec<f32>, Vec<usize>)> = Vec::new();
+        for (i, v) in vars.iter().enumerate() {
+            let t = v.as_tensor();
+            let data: Vec<f32> = t
+                .flatten_all()
+                .map_err(|e| crate::TensorCoreError::Tensor(format!("flatten failed: {}", e)))?
+                .to_vec1()
+                .map_err(|e| crate::TensorCoreError::Tensor(format!("to_vec1 failed: {}", e)))?;
+            let shape: Vec<usize> = t.dims().to_vec();
+            tensor_data.push((format!("param_{}", i), data, shape));
+        }
 
-        // Save tensors using candle's safetensors API
-        candle_core::safetensors::save(&tensors, path.as_ref())
+        // Build safetensors TensorView map
+        let mut views: std::collections::HashMap<String, safetensors::tensor::TensorView<'_>> =
+            std::collections::HashMap::new();
+        for (name, data, shape) in &tensor_data {
+            let view = safetensors::tensor::TensorView::new(
+                safetensors::tensor::Dtype::F32,
+                shape.clone(),
+                bytemuck::cast_slice(data),
+            )
+            .map_err(|e| {
+                crate::TensorCoreError::Serialization(format!("TensorView failed: {}", e))
+            })?;
+            views.insert(name.clone(), view);
+        }
+
+        // Build metadata map (embedded in safetensors __metadata__ header field)
+        let mut meta_map = std::collections::HashMap::new();
+        meta_map.insert("name".to_string(), metadata.name);
+        meta_map.insert("version".to_string(), metadata.version);
+        meta_map.insert("spec_hash".to_string(), metadata.spec_hash);
+        if let Some(ns) = metadata.namespace {
+            meta_map.insert("namespace".to_string(), ns);
+        }
+        meta_map.insert("trained_at".to_string(), metadata.trained_at.to_rfc3339());
+        meta_map.insert("param_count".to_string(), self.param_count.to_string());
+
+        // Serialize to file with metadata in safetensors header
+        safetensors::serialize_to_file(views, &Some(meta_map), path.as_ref())
             .map_err(|e| crate::TensorCoreError::Serialization(format!("Failed to save: {}", e)))?;
-
-        // Save metadata as sidecar JSON file
-        let meta_path = path.as_ref().with_extension("meta.json");
-        let meta_json = serde_json::json!({
-            "name": metadata.name,
-            "version": metadata.version,
-            "spec_hash": metadata.spec_hash,
-            "namespace": metadata.namespace,
-            "trained_at": metadata.trained_at.to_rfc3339(),
-            "param_count": self.param_count,
-        });
-        std::fs::write(
-            &meta_path,
-            serde_json::to_string_pretty(&meta_json).unwrap(),
-        )
-        .map_err(|e| {
-            crate::TensorCoreError::Serialization(format!("Failed to save metadata: {}", e))
-        })?;
 
         Ok(())
     }
 
     /// Load and return metadata from a checkpoint
     ///
-    /// Reads the sidecar `.meta.json` file created by `save_with_metadata`.
-    /// Returns an error if the metadata file doesn't exist.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let meta = CompiledRule::load_metadata("models/pipeline_rules_v1.safetensors")?;
-    /// println!("Version: {}", meta.version);
-    /// ```
+    /// Returns metadata if the checkpoint was saved with `save_with_metadata`.
+    /// Reads from the safetensors `__metadata__` header field.
     pub fn load_metadata(path: impl AsRef<Path>) -> crate::Result<RuleCheckpointMetadata> {
-        let meta_path = path.as_ref().with_extension("meta.json");
-
-        let meta_json = std::fs::read_to_string(&meta_path).map_err(|e| {
-            crate::TensorCoreError::Serialization(format!(
-                "Failed to read metadata file '{}': {}",
-                meta_path.display(),
-                e
-            ))
+        let data = std::fs::read(path.as_ref()).map_err(|e| {
+            crate::TensorCoreError::Serialization(format!("Failed to read file: {}", e))
         })?;
 
-        let meta_value: serde_json::Value = serde_json::from_str(&meta_json).map_err(|e| {
-            crate::TensorCoreError::Serialization(format!("Invalid metadata JSON: {}", e))
-        })?;
+        // Parse header to get metadata
+        let header_size = u64::from_le_bytes(data[0..8].try_into().unwrap()) as usize;
+        let header_json = std::str::from_utf8(&data[8..8 + header_size])
+            .map_err(|e| crate::TensorCoreError::Serialization(format!("Invalid header: {}", e)))?;
+
+        // Parse as JSON to get __metadata__ field
+        let header: serde_json::Value = serde_json::from_str(header_json)
+            .map_err(|e| crate::TensorCoreError::Serialization(format!("Invalid JSON: {}", e)))?;
+
+        let meta_map = header
+            .get("__metadata__")
+            .and_then(|v| v.as_object())
+            .ok_or_else(|| {
+                crate::TensorCoreError::Serialization("No metadata in checkpoint".into())
+            })?;
 
         let get_str = |key: &str| -> String {
-            meta_value
+            meta_map
                 .get(key)
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string()
         };
 
-        let trained_at = meta_value
+        let trained_at = meta_map
             .get("trained_at")
             .and_then(|v| v.as_str())
             .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
@@ -1001,7 +1019,7 @@ impl CompiledRule {
             name: get_str("name"),
             version: get_str("version"),
             spec_hash: get_str("spec_hash"),
-            namespace: meta_value
+            namespace: meta_map
                 .get("namespace")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string()),
@@ -1374,6 +1392,7 @@ pub struct CompiledOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::NamedTempFile;
 
     #[test]
     fn test_rule_spec_creation() {
@@ -1596,7 +1615,9 @@ mod tests {
         let metadata =
             RuleCheckpointMetadata::from_compiled(&compiled, "v1.0.0").with_namespace("PIPELINE");
 
-        let temp_path = std::env::temp_dir().join("test_metadata.safetensors");
+        let temp = NamedTempFile::new().unwrap();
+        let temp_path = temp.path().with_extension("safetensors");
+        temp.close().unwrap();
         compiled.save_with_metadata(&temp_path, metadata).unwrap();
 
         // Load metadata back
@@ -1607,7 +1628,6 @@ mod tests {
         assert_eq!(loaded_meta.namespace, Some("PIPELINE".to_string()));
         assert!(!loaded_meta.spec_hash.is_empty());
 
-        // Clean up
         std::fs::remove_file(temp_path).ok();
     }
 

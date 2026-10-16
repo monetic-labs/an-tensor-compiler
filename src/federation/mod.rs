@@ -13,7 +13,7 @@
 //!
 //! ## Architecture Split
 //!
-//! **This module provides** (owned by an-tensor-core):
+//! **This module provides** (owned by an-tensor-compiler):
 //! - Types: `FederationConfig`, `MergeStrategy`, `FederatedPredicate`
 //! - Algorithms: `weighted_average()`, `fedavg()` merge functions
 //! - Traits: `SyncTransport` trait for transport abstraction
@@ -46,9 +46,9 @@
 //!
 //! | Component | Status | Owner |
 //! |-----------|--------|-------|
-//! | Types (FederationConfig, etc.) | ✅ Complete | an-tensor-core |
-//! | Merge algorithms | ✅ Complete | an-tensor-core |
-//! | SyncTransport trait | ✅ Complete | an-tensor-core |
+//! | Types (FederationConfig, etc.) | ✅ Complete | an-tensor-compiler |
+//! | Merge algorithms | ✅ Complete | an-tensor-compiler |
+//! | SyncTransport trait | ✅ Complete | an-tensor-compiler |
 //! | Transport impls | 📋 Week 6 | an-integration / DevOps |
 //! | Orchestration | 📋 Week 6 | DevOps |
 

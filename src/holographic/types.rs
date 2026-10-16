@@ -3,11 +3,18 @@
 //! Defines the tensor types for components, modules, bounded contexts,
 //! and organisms in the hierarchical code representation.
 
+use crate::holographic::bridges::{BridgeBinding, BridgeBindingType, BridgeProjectionPolicy};
+use crate::holographic::knowledge::{
+    ItemProvenance, KnowledgeItemRef, KnowledgeItemType, KnowledgeSpaceKind, KnowledgeSpaceTensor,
+    KnowledgeSystemView, SalienceDefaults, SpaceBoundaryPolicy, SpaceProvenance,
+    SpaceTemporalPolicy,
+};
 use candle_core::Tensor;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::str::FromStr;
 
 // ============================================================================
 // Component Level (Atomic)
@@ -69,7 +76,6 @@ pub struct ComponentId {
 }
 
 impl ComponentId {
-    /// Create a new component identifier
     pub fn new(module: impl Into<String>, name: impl Into<String>, kind: ComponentKind) -> Self {
         Self {
             module: module.into(),
@@ -98,24 +104,22 @@ pub struct ComponentTensor {
 
     /// Source file location
     pub file: PathBuf,
-    /// Starting line number in source file
     pub line_start: usize,
-    /// Ending line number in source file
     pub line_end: usize,
 
-    /// Semantic embedding (what it does), shape: `[dim]`
+    /// Semantic embedding (what it does) \[dim\]
     pub semantic: Tensor,
 
-    /// Structural embedding (AST shape), shape: `[dim]`
+    /// Structural embedding (AST shape) \[dim\]
     pub structural: Tensor,
 
-    /// Signature embedding (types, parameters), shape: `[dim]`
+    /// Signature embedding (types, parameters) \[dim\]
     pub signature: Tensor,
 
-    /// Documentation embedding, shape: `[dim]`
+    /// Documentation embedding \[dim\]
     pub documentation: Option<Tensor>,
 
-    /// Combined holographic representation, shape: `[dim]`
+    /// Combined holographic representation \[dim\]
     pub hologram: Tensor,
 
     /// Visibility
@@ -138,7 +142,7 @@ pub struct ModuleTensor {
     /// Components in this module
     pub components: Vec<ComponentTensor>,
 
-    /// Composed hologram, shape: `[dim]`
+    /// Composed hologram \[dim\]
     pub hologram: Tensor,
 
     /// Public exports
@@ -189,14 +193,26 @@ impl ContextRole {
         }
     }
 
-    /// Parse from a role string
+    /// Parse from string
     pub fn parse(s: &str) -> Option<Self> {
-        match s.to_lowercase().as_str() {
-            "core" => Some(Self::Core),
-            "support" => Some(Self::Support),
-            "utility" => Some(Self::Utility),
-            "integration" => Some(Self::Integration),
-            _ => None,
+        s.parse().ok()
+    }
+}
+
+impl FromStr for ContextRole {
+    type Err = ();
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        if s.eq_ignore_ascii_case("core") {
+            Ok(Self::Core)
+        } else if s.eq_ignore_ascii_case("support") {
+            Ok(Self::Support)
+        } else if s.eq_ignore_ascii_case("utility") {
+            Ok(Self::Utility)
+        } else if s.eq_ignore_ascii_case("integration") {
+            Ok(Self::Integration)
+        } else {
+            Err(())
         }
     }
 }
@@ -219,7 +235,7 @@ pub struct BoundedContextTensor {
     /// Modules in this context
     pub modules: Vec<ModuleTensor>,
 
-    /// Composed hologram, shape: `[dim]`
+    /// Composed hologram \[dim\]
     pub hologram: Tensor,
 
     /// Public API exports
@@ -245,6 +261,79 @@ impl BoundedContextTensor {
             .flat_map(|m| m.components.iter())
             .filter(|c| c.id.name.contains(pattern) || c.id.module.contains(pattern))
             .collect()
+    }
+}
+
+impl From<&BoundedContextTensor> for KnowledgeSpaceTensor {
+    fn from(value: &BoundedContextTensor) -> Self {
+        let mut items = Vec::new();
+
+        for module in &value.modules {
+            items.push(KnowledgeItemRef {
+                id: format!("module::{}", module.path),
+                item_type: KnowledgeItemType::Custom("module".to_string()),
+                hologram: module.hologram.clone(),
+                description: Some(module.path.clone()),
+                provenance: ItemProvenance {
+                    source_id: value.name.clone(),
+                    lineage: vec![module.file.display().to_string()],
+                    ..ItemProvenance::default()
+                },
+            });
+
+            for component in &module.components {
+                items.push(KnowledgeItemRef {
+                    id: component.id.full_path(),
+                    item_type: KnowledgeItemType::Component,
+                    hologram: component.hologram.clone(),
+                    description: Some(component.id.full_path()),
+                    provenance: ItemProvenance {
+                        source_id: value.name.clone(),
+                        lineage: vec![
+                            module.path.clone(),
+                            component.file.display().to_string(),
+                            format!("{}:{}", component.line_start, component.line_end),
+                        ],
+                        ..ItemProvenance::default()
+                    },
+                });
+            }
+        }
+
+        let mut metadata = HashMap::new();
+        metadata.insert(
+            "context_role".to_string(),
+            context_role_name(value.role).to_string(),
+        );
+        metadata.insert("path".to_string(), value.path.display().to_string());
+        metadata.insert("module_count".to_string(), value.modules.len().to_string());
+        metadata.insert("api_export_count".to_string(), value.api.len().to_string());
+        metadata.insert(
+            "dependency_edge_count".to_string(),
+            value.dependencies.len().to_string(),
+        );
+
+        if !value.patterns.is_empty() {
+            metadata.insert("patterns".to_string(), value.patterns.join(","));
+        }
+
+        Self {
+            id: value.name.clone(),
+            name: value.name.clone(),
+            description: value.description.clone(),
+            kind: KnowledgeSpaceKind::Code,
+            hologram: value.hologram.clone(),
+            items,
+            boundaries: SpaceBoundaryPolicy::default(),
+            provenance: SpaceProvenance {
+                sources: vec![value.path.display().to_string()],
+                ..SpaceProvenance::default()
+            },
+            temporal: SpaceTemporalPolicy::default(),
+            salience: SalienceDefaults::default(),
+            geometric_index: None,
+            metadata,
+        }
     }
 }
 
@@ -287,11 +376,8 @@ pub struct FederationBinding {
 /// Tensor representation of commit history
 #[derive(Debug, Clone)]
 pub struct CommitTensor {
-    /// Git commit hash
     pub hash: String,
-    /// Commit message
     pub message: String,
-    /// Commit timestamp
     pub timestamp: DateTime<Utc>,
     /// Tensor encoding of the diff
     pub diff_tensor: Tensor,
@@ -348,7 +434,7 @@ pub struct OrganismTensor {
     /// Bounded contexts
     pub contexts: Vec<BoundedContextTensor>,
 
-    /// Composed hologram, shape: `[dim]`
+    /// Composed hologram \[dim\]
     pub hologram: Tensor,
 
     /// Boundary rules
@@ -360,11 +446,9 @@ pub struct OrganismTensor {
     /// History tensor
     pub history: Option<HistoryTensor>,
 
-    /// When this organism tensor was last updated
+    /// Metadata
     pub updated_at: DateTime<Utc>,
-    /// Git commit hash this tensor was built from
     pub commit: String,
-    /// Embedding dimension used for all holograms
     pub embedding_dim: usize,
 }
 
@@ -372,6 +456,86 @@ impl OrganismTensor {
     /// Get a bounded context by name
     pub fn get_context(&self, name: &str) -> Option<&BoundedContextTensor> {
         self.contexts.iter().find(|c| c.name == name)
+    }
+
+    /// Adapt this organism into neutral knowledge spaces.
+    pub fn as_knowledge_spaces(&self) -> Vec<KnowledgeSpaceTensor> {
+        self.contexts
+            .iter()
+            .map(|context| {
+                let mut space = KnowledgeSpaceTensor::from(context);
+                space.boundaries = SpaceBoundaryPolicy {
+                    allow_unbridged_projection: false,
+                    allowed_inbound_spaces: self
+                        .boundaries
+                        .allowed
+                        .iter()
+                        .filter_map(|(from, deps)| {
+                            if deps.iter().any(|dep| dep == &context.name) {
+                                Some(from.clone())
+                            } else {
+                                None
+                            }
+                        })
+                        .collect(),
+                    allowed_outbound_spaces: self
+                        .boundaries
+                        .allowed
+                        .get(&context.name)
+                        .cloned()
+                        .unwrap_or_default(),
+                    allowed_bridge_ids: self
+                        .federation
+                        .iter()
+                        .map(|binding| format!("federation::{}", binding.organism))
+                        .collect(),
+                };
+                space.provenance.updated_at = Some(self.updated_at);
+                space
+            })
+            .collect()
+    }
+
+    /// Adapt this organism into a neutral multi-space system view.
+    pub fn as_knowledge_system(&self) -> KnowledgeSystemView {
+        let mut metadata = HashMap::new();
+        metadata.insert("commit".to_string(), self.commit.clone());
+        metadata.insert("embedding_dim".to_string(), self.embedding_dim.to_string());
+        metadata.insert("context_count".to_string(), self.contexts.len().to_string());
+        metadata.insert(
+            "federation_binding_count".to_string(),
+            self.federation.len().to_string(),
+        );
+        metadata.insert(
+            "history_enabled".to_string(),
+            self.history.is_some().to_string(),
+        );
+
+        KnowledgeSystemView {
+            id: self.project_id.clone(),
+            name: self.name.clone(),
+            description: self.description.clone(),
+            hologram: self.hologram.clone(),
+            spaces: self.as_knowledge_spaces(),
+            bridges: self
+                .federation
+                .iter()
+                .map(|binding| BridgeBinding {
+                    id: format!("federation::{}", binding.organism),
+                    from_space: self.project_id.clone(),
+                    to_space: binding.organism.clone(),
+                    binding_type: BridgeBindingType::DerivedFrom,
+                    policy: BridgeProjectionPolicy::default(),
+                    provenance: ItemProvenance {
+                        source_id: self.project_id.clone(),
+                        lineage: binding.imports.clone(),
+                        ..ItemProvenance::default()
+                    },
+                    active: true,
+                })
+                .collect(),
+            metadata,
+        }
     }
 
     /// Project a query to find relevant context
@@ -520,13 +684,9 @@ impl CoherenceResult {
 /// A boundary violation in generated code
 #[derive(Debug, Clone)]
 pub struct BoundaryViolation {
-    /// Source bounded context that has the invalid dependency
     pub from_context: String,
-    /// Target bounded context that was illegally depended upon
     pub to_context: String,
-    /// Component that caused the violation
     pub component: String,
-    /// Human-readable explanation of why this is a violation
     pub reason: String,
 }
 
@@ -537,5 +697,115 @@ impl std::fmt::Display for BoundaryViolation {
             "{} -> {} via '{}': {}",
             self.from_context, self.to_context, self.component, self.reason
         )
+    }
+}
+
+fn context_role_name(role: ContextRole) -> &'static str {
+    match role {
+        ContextRole::Core => "core",
+        ContextRole::Support => "support",
+        ContextRole::Utility => "utility",
+        ContextRole::Integration => "integration",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use candle_core::Device;
+
+    fn zeros(dim: usize) -> Tensor {
+        Tensor::zeros((dim,), candle_core::DType::F32, &Device::Cpu).unwrap()
+    }
+
+    fn sample_component() -> ComponentTensor {
+        ComponentTensor {
+            id: ComponentId::new("crate::core", "Thing", ComponentKind::Struct),
+            file: PathBuf::from("src/core.rs"),
+            line_start: 1,
+            line_end: 10,
+            semantic: zeros(8),
+            structural: zeros(8),
+            signature: zeros(8),
+            documentation: None,
+            hologram: zeros(8),
+            is_public: true,
+        }
+    }
+
+    fn sample_context() -> BoundedContextTensor {
+        let component = sample_component();
+        let module = ModuleTensor {
+            path: "crate::core".to_string(),
+            file: PathBuf::from("src/core.rs"),
+            components: vec![component.clone()],
+            hologram: zeros(8),
+            exports: vec![component.id.clone()],
+            imports: vec!["crate::util".to_string()],
+        };
+
+        BoundedContextTensor {
+            name: "core".to_string(),
+            path: PathBuf::from("crates/core"),
+            description: "Core context".to_string(),
+            role: ContextRole::Core,
+            modules: vec![module],
+            hologram: zeros(8),
+            api: vec![component.id],
+            patterns: vec!["async".to_string()],
+            dependencies: vec![("crate::core".to_string(), "crate::util".to_string())],
+        }
+    }
+
+    #[test]
+    fn test_bounded_context_adapts_to_knowledge_space() {
+        let context = sample_context();
+        let space = KnowledgeSpaceTensor::from(&context);
+
+        assert_eq!(space.id, "core");
+        assert_eq!(space.kind, KnowledgeSpaceKind::Code);
+        assert_eq!(space.items.len(), 2);
+        assert_eq!(space.metadata.get("context_role").unwrap(), "core");
+        assert_eq!(space.metadata.get("module_count").unwrap(), "1");
+    }
+
+    #[test]
+    fn test_organism_adapts_to_knowledge_system() {
+        let context = sample_context();
+        let mut boundaries = BoundaryRules::default();
+        boundaries.allow("core", "util");
+        boundaries.allow("util", "core");
+
+        let organism = OrganismTensor {
+            project_id: "proj".to_string(),
+            name: "Project".to_string(),
+            description: "Test project".to_string(),
+            contexts: vec![context],
+            hologram: zeros(8),
+            boundaries,
+            federation: vec![FederationBinding {
+                organism: "ext-org".to_string(),
+                imports: vec!["shared::Thing".to_string()],
+            }],
+            history: None,
+            updated_at: Utc::now(),
+            commit: "abc123".to_string(),
+            embedding_dim: 8,
+        };
+
+        let system = organism.as_knowledge_system();
+
+        assert_eq!(system.id, "proj");
+        assert_eq!(system.spaces.len(), 1);
+        assert_eq!(
+            system.spaces[0].boundaries.allowed_outbound_spaces,
+            vec!["util".to_string()]
+        );
+        assert_eq!(
+            system.spaces[0].boundaries.allowed_bridge_ids,
+            vec!["federation::ext-org".to_string()]
+        );
+        assert_eq!(system.bridges.len(), 1);
+        assert_eq!(system.metadata.get("commit").unwrap(), "abc123");
     }
 }

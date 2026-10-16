@@ -244,11 +244,68 @@ pub fn weighted_rule_combination(
     super::activations::sigmoid(&squeezed)
 }
 
-/// Core asymmetric loss computation (per-element, unreduced)
+/// Asymmetric MSE loss for reconciliation learning
 ///
-/// Computes per-element weighted squared errors where underprediction
-/// (actual > predicted) and overprediction receive different penalty weights.
-fn asymmetric_loss_core(
+/// Penalizes underprediction (actual > predicted) more heavily than overprediction.
+/// This is critical for cost budgeting where surprise costs are worse than budget headroom.
+///
+/// # Arguments
+/// * `predicted` - Predicted values tensor
+/// * `actual` - Actual (ground truth) values tensor
+/// * `underprediction_weight` - Penalty weight for underprediction (default: 2.0)
+/// * `overprediction_weight` - Penalty weight for overprediction (default: 0.5)
+///
+/// # Returns
+/// Scalar mean asymmetric loss
+///
+/// # Example
+/// ```ignore
+/// // Actual costs were higher than predicted (bad - budget surprise)
+/// let predicted = Tensor::new(&[100.0f32], &device)?;
+/// let actual = Tensor::new(&[120.0f32], &device)?;
+/// let loss = asymmetric_mse_loss(&predicted, &actual, 2.0, 0.5)?;
+/// // Loss = (120-100)² × 2.0 = 800.0
+/// ```
+pub fn asymmetric_mse_loss(
+    predicted: &Tensor,
+    actual: &Tensor,
+    underprediction_weight: f32,
+    overprediction_weight: f32,
+) -> Result<Tensor> {
+    let per_element = asymmetric_weighted_squared_errors(
+        predicted,
+        actual,
+        underprediction_weight,
+        overprediction_weight,
+    )?;
+    per_element
+        .mean_all()
+        .map_err(|e| TensorCoreError::Tensor(format!("asymmetric_mse_loss mean failed: {}", e)))
+}
+
+/// Per-element asymmetric loss (for analysis, not reduction)
+///
+/// Returns per-element weighted squared errors without reducing to scalar.
+/// Useful for analyzing per-element variance in predictions.
+pub fn asymmetric_loss_per_element(
+    predicted: &Tensor,
+    actual: &Tensor,
+    underprediction_weight: f32,
+    overprediction_weight: f32,
+) -> Result<Tensor> {
+    asymmetric_weighted_squared_errors(
+        predicted,
+        actual,
+        underprediction_weight,
+        overprediction_weight,
+    )
+}
+
+/// Core asymmetric weighting: computes per-element weighted squared errors.
+///
+/// Shared implementation for both `asymmetric_mse_loss` (mean-reduced) and
+/// `asymmetric_loss_per_element` (unreduced).
+fn asymmetric_weighted_squared_errors(
     predicted: &Tensor,
     actual: &Tensor,
     underprediction_weight: f32,
@@ -290,62 +347,6 @@ fn asymmetric_loss_core(
     squared
         .mul(&weights)
         .map_err(|e| TensorCoreError::Tensor(format!("asymmetric_loss mul failed: {}", e)))
-}
-
-/// Asymmetric MSE loss for reconciliation learning
-///
-/// Penalizes underprediction (actual > predicted) more heavily than overprediction.
-/// This is critical for cost budgeting where surprise costs are worse than budget headroom.
-///
-/// # Arguments
-/// * `predicted` - Predicted values tensor
-/// * `actual` - Actual (ground truth) values tensor
-/// * `underprediction_weight` - Penalty weight for underprediction (default: 2.0)
-/// * `overprediction_weight` - Penalty weight for overprediction (default: 0.5)
-///
-/// # Returns
-/// Scalar mean asymmetric loss
-///
-/// # Example
-/// ```ignore
-/// // Actual costs were higher than predicted (bad - budget surprise)
-/// let predicted = Tensor::new(&[100.0f32], &device)?;
-/// let actual = Tensor::new(&[120.0f32], &device)?;
-/// let loss = asymmetric_mse_loss(&predicted, &actual, 2.0, 0.5)?;
-/// // Loss = (120-100)² × 2.0 = 800.0
-/// ```
-pub fn asymmetric_mse_loss(
-    predicted: &Tensor,
-    actual: &Tensor,
-    underprediction_weight: f32,
-    overprediction_weight: f32,
-) -> Result<Tensor> {
-    asymmetric_loss_core(
-        predicted,
-        actual,
-        underprediction_weight,
-        overprediction_weight,
-    )?
-    .mean_all()
-    .map_err(|e| TensorCoreError::Tensor(format!("asymmetric_mse_loss mean failed: {}", e)))
-}
-
-/// Per-element asymmetric loss (for analysis, not reduction)
-///
-/// Returns per-element weighted squared errors without reducing to scalar.
-/// Useful for analyzing per-element variance in predictions.
-pub fn asymmetric_loss_per_element(
-    predicted: &Tensor,
-    actual: &Tensor,
-    underprediction_weight: f32,
-    overprediction_weight: f32,
-) -> Result<Tensor> {
-    asymmetric_loss_core(
-        predicted,
-        actual,
-        underprediction_weight,
-        overprediction_weight,
-    )
 }
 
 #[cfg(test)]

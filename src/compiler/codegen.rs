@@ -26,23 +26,133 @@
 //! | `pred(X, θ)` | `soft_threshold(X, θ, k)` |
 //! | Multiple rules | `fuzzy_or_many([rule1, rule2, ...])` |
 
-pub mod attention;
-pub mod utils;
-
-pub use attention::AttentionParams;
-use utils::{
-    apply_activation, apply_dropout, apply_layer_norm, apply_multi_head_attention, l2_normalize,
-    normalize_adjacency,
-};
-pub use utils::{detect_sparse_coo, get_adjacency_matrix, sparse_coo_to_dense};
-
 use std::collections::HashMap;
 
-use candle_core::{DType, Device, Tensor, Var};
+use candle_core::{DType, Device, Tensor, Var, D};
 
 use super::{Argument, CompiledOutput, PredicateSpec, RuleSpec};
 use crate::primitives::{fuzzy_and, fuzzy_not, fuzzy_or_many, soft_threshold_scalar};
 use crate::{Result, TensorCoreError};
+
+// =============================================================================
+// ATTENTION PARAMETERS
+// =============================================================================
+
+/// Parameters for multi-head attention
+#[derive(Debug)]
+pub struct AttentionParams {
+    /// Number of attention heads
+    pub num_heads: usize,
+    /// Dimension per head (hidden_dim / num_heads)
+    pub head_dim: usize,
+    /// Query projection: [hidden_dim, hidden_dim]
+    pub wq: Var,
+    /// Key projection: [hidden_dim, hidden_dim]
+    pub wk: Var,
+    /// Value projection: [hidden_dim, hidden_dim]
+    pub wv: Var,
+    /// Output projection: [hidden_dim, hidden_dim]
+    pub wo: Var,
+}
+
+impl AttentionParams {
+    /// Create new attention parameters with scaled dot-product initialization
+    ///
+    /// Uses standard transformer initialization for stable gradients:
+    /// - Q, K: scaled by 1/sqrt(head_dim) (keeps Var[QK^T] ≈ 1 after scaling)
+    /// - V, O: Xavier initialization
+    ///
+    /// This matches PyTorch's nn.MultiheadAttention default and provides
+    /// stable gradients from the first backward pass.
+    pub fn new(hidden_dim: usize, num_heads: usize, device: &Device) -> Result<Self> {
+        if !hidden_dim.is_multiple_of(num_heads) {
+            return Err(TensorCoreError::Compiler(format!(
+                "hidden_dim ({}) must be divisible by num_heads ({})",
+                hidden_dim, num_heads
+            )));
+        }
+
+        let head_dim = hidden_dim / num_heads;
+
+        // Standard scaled dot-product initialization for Q and K
+        // This keeps Var[QK^T] ≈ head_dim before scaling, then ≈1 after /sqrt(d_k)
+        // Matches PyTorch default and ensures stable gradients
+        let qk_scale = 1.0f32 / (head_dim as f32).sqrt();
+
+        // Xavier scale for V and O (they carry information, not similarity scores)
+        let vo_scale = (2.0f32 / (hidden_dim * 2) as f32).sqrt();
+
+        let wq = Var::from_tensor(
+            &Tensor::randn(0.0f32, qk_scale, (hidden_dim, hidden_dim), device)
+                .map_err(|e| TensorCoreError::Tensor(format!("Failed to create Wq: {}", e)))?,
+        )
+        .map_err(|e| TensorCoreError::Tensor(format!("Failed to create Wq var: {}", e)))?;
+
+        let wk = Var::from_tensor(
+            &Tensor::randn(0.0f32, qk_scale, (hidden_dim, hidden_dim), device)
+                .map_err(|e| TensorCoreError::Tensor(format!("Failed to create Wk: {}", e)))?,
+        )
+        .map_err(|e| TensorCoreError::Tensor(format!("Failed to create Wk var: {}", e)))?;
+
+        let wv = Var::from_tensor(
+            &Tensor::randn(0.0f32, vo_scale, (hidden_dim, hidden_dim), device)
+                .map_err(|e| TensorCoreError::Tensor(format!("Failed to create Wv: {}", e)))?,
+        )
+        .map_err(|e| TensorCoreError::Tensor(format!("Failed to create Wv var: {}", e)))?;
+
+        let wo = Var::from_tensor(
+            &Tensor::randn(0.0f32, vo_scale, (hidden_dim, hidden_dim), device)
+                .map_err(|e| TensorCoreError::Tensor(format!("Failed to create Wo: {}", e)))?,
+        )
+        .map_err(|e| TensorCoreError::Tensor(format!("Failed to create Wo var: {}", e)))?;
+
+        Ok(Self {
+            num_heads,
+            head_dim,
+            wq,
+            wk,
+            wv,
+            wo,
+        })
+    }
+
+    /// Clamp attention weights to prevent gradient explosion
+    ///
+    /// Call this after optimizer.step() to keep weights bounded.
+    /// This prevents the Q/K weight explosion that causes NaN after training steps.
+    pub fn clamp_weights(&self, max_val: f32) -> Result<()> {
+        let clamp_var = |v: &Var| -> Result<()> {
+            let clamped = v
+                .as_tensor()
+                .clamp(-max_val, max_val)
+                .map_err(|e| TensorCoreError::Tensor(format!("clamp failed: {}", e)))?;
+            v.set(&clamped)
+                .map_err(|e| TensorCoreError::Tensor(format!("set failed: {}", e)))?;
+            Ok(())
+        };
+
+        clamp_var(&self.wq)?;
+        clamp_var(&self.wk)?;
+        clamp_var(&self.wv)?;
+        clamp_var(&self.wo)?;
+        Ok(())
+    }
+
+    /// Get all trainable variables
+    pub fn trainable_vars(&self) -> Vec<Var> {
+        vec![
+            self.wq.clone(),
+            self.wk.clone(),
+            self.wv.clone(),
+            self.wo.clone(),
+        ]
+    }
+
+    /// Total parameter count
+    pub fn param_count(&self) -> usize {
+        4 * self.wq.as_tensor().elem_count()
+    }
+}
 
 // =============================================================================
 // COMPILED PREDICATE
@@ -81,11 +191,11 @@ pub enum CompiledPredicate {
         input_names: Vec<String>,
         /// First layer weights: [input_dim, hidden_dim]
         w1: Var,
-        /// First layer bias: `[hidden_dim]`
+        /// First layer bias: \[hidden_dim\]
         b1: Var,
         /// Second layer weights: [hidden_dim, 1]
         w2: Var,
-        /// Second layer bias: `[1]`
+        /// Second layer bias: \[1\]
         b2: Var,
         /// Activation function
         activation: super::Activation,
@@ -167,7 +277,20 @@ impl CompiledPredicate {
                 } else {
                     -*sharpness
                 };
-                soft_threshold_scalar(input, *threshold, sharp)
+                // Soft-threshold preserves the input rank. Inputs are often
+                // batched 2-D `[1, 1]` so `LearnedProjection` can
+                // `Tensor::cat(..., 1)`, but rule-body `fuzzy_and` expects
+                // 1-D activations (LearnedProjection squeezes its head to
+                // `[batch]`). Flatten so Threshold and LearnedProjection
+                // conjunctions share shape `[batch]` — otherwise
+                // `fuzzy_and` fails with `shape mismatch in mul, lhs:
+                // [1, 1], rhs: [1]` (an-account digest 500 residual,
+                // 2026-07-11).
+                soft_threshold_scalar(input, *threshold, sharp)?
+                    .flatten_all()
+                    .map_err(|e| {
+                        TensorCoreError::Tensor(format!("threshold flatten failed: {}", e))
+                    })
             }
 
             CompiledPredicate::Learned {
@@ -526,95 +649,27 @@ impl CompiledPredicate {
                 // Message passing layers
                 let mut h = node_features.clone();
                 for (w_self, w_neighbor, bias) in layers {
-                    // Self transform: H @ W_self
+                    // Self transform
                     let h_self = h.matmul(w_self.as_tensor()).map_err(|e| {
                         TensorCoreError::Tensor(format!("matmul self failed: {}", e))
                     })?;
 
-                    // Neighbor aggregation (strategy-dependent)
-                    let h_neighbor = match aggregation {
-                        super::Aggregation::Max => {
-                            // Element-wise max pooling over neighbors.
-                            // For each node i: h_agg[i] = max over j∈N(i) of h[j]
-                            // Computed as: expand h[j] per neighbor, zero non-edges, take max.
-                            let n = h.dims()[0];
-                            let feat = h.dims()[1];
+                    // Neighbor aggregation: A @ H @ W_neighbor
+                    let h_neighbor = adj_norm
+                        .matmul(&h)
+                        .map_err(|e| TensorCoreError::Tensor(format!("adj matmul failed: {}", e)))?
+                        .matmul(w_neighbor.as_tensor())
+                        .map_err(|e| {
+                            TensorCoreError::Tensor(format!("matmul neighbor failed: {}", e))
+                        })?;
 
-                            // adj_norm here is raw adjacency (no normalization for Max)
-                            // Expand H to [N, N, feat]: h_j for each (i,j) pair
-                            let h_expanded = h
-                                .unsqueeze(0)
-                                .map_err(|e| {
-                                    TensorCoreError::Tensor(format!(
-                                        "max expand unsqueeze failed: {}",
-                                        e
-                                    ))
-                                })?
-                                .expand(&[n, n, feat])
-                                .map_err(|e| {
-                                    TensorCoreError::Tensor(format!("max expand failed: {}", e))
-                                })?;
-
-                            // Mask: adj [N,N] → [N,N,1], zero out non-neighbors
-                            let adj_mask = adj_norm.unsqueeze(2).map_err(|e| {
-                                TensorCoreError::Tensor(format!("max adj unsqueeze failed: {}", e))
-                            })?;
-
-                            let neg_inf = Tensor::full(f32::NEG_INFINITY, (n, n, feat), device)
-                                .map_err(|e| {
-                                    TensorCoreError::Tensor(format!("max neg_inf failed: {}", e))
-                                })?;
-                            let adj_bool = adj_mask.gt(0.0f64).map_err(|e| {
-                                TensorCoreError::Tensor(format!("max adj_bool failed: {}", e))
-                            })?;
-                            let h_masked =
-                                adj_bool.where_cond(&h_expanded, &neg_inf).map_err(|e| {
-                                    TensorCoreError::Tensor(format!("max where_cond failed: {}", e))
-                                })?;
-
-                            // Max over neighbor dimension → [N, feat]
-                            let h_max = h_masked.max(1).map_err(|e| {
-                                TensorCoreError::Tensor(format!("max reduce failed: {}", e))
-                            })?;
-
-                            // Replace -inf (isolated nodes) with 0
-                            let zeros_2d = Tensor::zeros_like(&h_max).map_err(|e| {
-                                TensorCoreError::Tensor(format!("max zeros_2d failed: {}", e))
-                            })?;
-                            let is_neg_inf = h_max.lt(-1e30_f64).map_err(|e| {
-                                TensorCoreError::Tensor(format!("max lt failed: {}", e))
-                            })?;
-                            let h_agg = is_neg_inf.where_cond(&zeros_2d, &h_max).map_err(|e| {
-                                TensorCoreError::Tensor(format!("max fill failed: {}", e))
-                            })?;
-
-                            h_agg.matmul(w_neighbor.as_tensor()).map_err(|e| {
-                                TensorCoreError::Tensor(format!("max matmul W failed: {}", e))
-                            })?
-                        }
-                        _ => {
-                            // Mean / Sum / Attention: A_norm @ H @ W_neighbor
-                            adj_norm
-                                .matmul(&h)
-                                .map_err(|e| {
-                                    TensorCoreError::Tensor(format!("adj matmul failed: {}", e))
-                                })?
-                                .matmul(w_neighbor.as_tensor())
-                                .map_err(|e| {
-                                    TensorCoreError::Tensor(format!(
-                                        "matmul neighbor failed: {}",
-                                        e
-                                    ))
-                                })?
-                        }
-                    };
-
-                    // Combine self + neighbor and apply non-linearity
+                    // Combine and apply non-linearity
                     h = (&h_self + &h_neighbor)
                         .map_err(|e| TensorCoreError::Tensor(format!("add failed: {}", e)))?
                         .broadcast_add(bias.as_tensor())
                         .map_err(|e| TensorCoreError::Tensor(format!("add bias failed: {}", e)))?;
 
+                    // ReLU activation
                     h = h
                         .relu()
                         .map_err(|e| TensorCoreError::Tensor(format!("relu failed: {}", e)))?;
@@ -718,11 +773,529 @@ impl CompiledPredicate {
     }
 }
 
-// Utility functions (apply_activation, apply_layer_norm, apply_dropout,
-// apply_multi_head_attention, l2_normalize, normalize_adjacency,
-// sparse_coo_to_dense, detect_sparse_coo, get_adjacency_matrix)
-// are in the `utils` submodule.
+/// Apply activation function
+fn apply_activation(x: &Tensor, activation: super::Activation) -> Result<Tensor> {
+    activation.apply(x)
+}
 
+/// Apply Layer Normalization
+///
+/// LayerNorm(x) = gamma * (x - mean) / sqrt(var + eps) + beta
+///
+/// This function auto-clamps gamma/beta weights and normalized values to prevent
+/// NaN from weight explosion after gradient updates.
+fn apply_layer_norm(x: &Tensor, gamma: &Var, beta: &Var) -> Result<Tensor> {
+    // Larger epsilon for numerical stability in backward pass
+    // 1e-5 can still cause issues when variance is very small
+    let eps = 1e-4;
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // AUTO-CLAMP LAYERNORM WEIGHTS (Fix for NaN after optimizer.step())
+    // ═══════════════════════════════════════════════════════════════════════════
+    // After gradient updates, gamma/beta can grow unbounded causing NaN.
+    // Clamp to reasonable range: gamma near 1.0, beta near 0.0 typically.
+    const LAYERNORM_WEIGHT_MAX: f32 = 10.0;
+
+    let gamma_clamped = gamma
+        .as_tensor()
+        .clamp(-LAYERNORM_WEIGHT_MAX, LAYERNORM_WEIGHT_MAX)
+        .map_err(|e| TensorCoreError::Tensor(format!("layer_norm gamma clamp failed: {}", e)))?;
+    let beta_clamped = beta
+        .as_tensor()
+        .clamp(-LAYERNORM_WEIGHT_MAX, LAYERNORM_WEIGHT_MAX)
+        .map_err(|e| TensorCoreError::Tensor(format!("layer_norm beta clamp failed: {}", e)))?;
+
+    // Compute mean and variance along the last dimension
+    let mean = x
+        .mean_keepdim(1)
+        .map_err(|e| TensorCoreError::Tensor(format!("layer_norm mean failed: {}", e)))?;
+
+    let x_centered = x
+        .broadcast_sub(&mean)
+        .map_err(|e| TensorCoreError::Tensor(format!("layer_norm center failed: {}", e)))?;
+
+    let var = x_centered
+        .sqr()
+        .map_err(|e| TensorCoreError::Tensor(format!("layer_norm sqr failed: {}", e)))?
+        .mean_keepdim(1)
+        .map_err(|e| TensorCoreError::Tensor(format!("layer_norm var mean failed: {}", e)))?;
+
+    // Add epsilon and sqrt, then clamp std to minimum value
+    // This prevents division by near-zero in backward pass
+    let std = var
+        .affine(1.0, eps)
+        .map_err(|e| TensorCoreError::Tensor(format!("layer_norm eps failed: {}", e)))?
+        .sqrt()
+        .map_err(|e| TensorCoreError::Tensor(format!("layer_norm sqrt failed: {}", e)))?
+        .clamp(eps.sqrt(), f32::MAX)
+        .map_err(|e| TensorCoreError::Tensor(format!("layer_norm std clamp failed: {}", e)))?;
+
+    // Normalize and clamp to prevent extreme values
+    let normalized = x_centered
+        .broadcast_div(&std)
+        .map_err(|e| TensorCoreError::Tensor(format!("layer_norm div failed: {}", e)))?
+        .clamp(-10.0f32, 10.0f32)
+        .map_err(|e| {
+            TensorCoreError::Tensor(format!("layer_norm normalized clamp failed: {}", e))
+        })?;
+
+    // Scale and shift using clamped weights: gamma * normalized + beta
+    let scaled = normalized
+        .broadcast_mul(&gamma_clamped)
+        .map_err(|e| TensorCoreError::Tensor(format!("layer_norm scale failed: {}", e)))?;
+
+    scaled
+        .broadcast_add(&beta_clamped)
+        .map_err(|e| TensorCoreError::Tensor(format!("layer_norm shift failed: {}", e)))
+}
+
+/// Apply dropout with inverted scaling
+///
+/// During training: randomly zero elements and scale remaining by 1/(1-p)
+/// For inference without separate mode: we apply a deterministic approximation
+/// by scaling the output (this maintains expected values)
+///
+/// This version clamps outputs to prevent NaN propagation from extreme values.
+fn apply_dropout(x: &Tensor, rate: f32) -> Result<Tensor> {
+    if rate <= 0.0 || rate >= 1.0 {
+        return Ok(x.clone());
+    }
+
+    // Clamp rate to safe range to prevent division issues
+    let rate = rate.clamp(0.01, 0.99);
+
+    // Generate random mask
+    let shape = x.shape();
+    let device = x.device();
+
+    // Create uniform random values [0, 1)
+    let rand = Tensor::rand(0.0f32, 1.0f32, shape, device)
+        .map_err(|e| TensorCoreError::Tensor(format!("dropout rand failed: {}", e)))?;
+
+    // Create mask: 1 where rand >= rate, 0 otherwise
+    // We use a soft approximation for gradient flow
+    let threshold = Tensor::full(rate, shape, device)
+        .map_err(|e| TensorCoreError::Tensor(format!("dropout threshold failed: {}", e)))?;
+
+    // mask = (rand > rate) as float, approximated with sigmoid for gradients
+    let diff = (&rand - &threshold)
+        .map_err(|e| TensorCoreError::Tensor(format!("dropout diff failed: {}", e)))?;
+
+    // Use a sharp sigmoid to approximate step function
+    // Clamp the sharpened value to prevent exp overflow in sigmoid
+    let mask = diff
+        .affine(100.0, 0.0) // Sharpen
+        .map_err(|e| TensorCoreError::Tensor(format!("dropout sharpen failed: {}", e)))?
+        .clamp(-50.0f32, 50.0f32)
+        .map_err(|e| TensorCoreError::Tensor(format!("dropout sharpen clamp failed: {}", e)))?;
+    let mask = crate::primitives::sigmoid(&mask)?;
+
+    // Scale by 1/(1-rate) to maintain expected value
+    let scale = 1.0 / (1.0 - rate);
+
+    let masked =
+        (x * &mask).map_err(|e| TensorCoreError::Tensor(format!("dropout mul failed: {}", e)))?;
+
+    // Clamp output to prevent extreme values propagating
+    masked
+        .affine(scale as f64, 0.0)
+        .map_err(|e| TensorCoreError::Tensor(format!("dropout scale failed: {}", e)))?
+        .clamp(-100.0f32, 100.0f32)
+        .map_err(|e| TensorCoreError::Tensor(format!("dropout output clamp failed: {}", e)))
+}
+
+/// Metal-compatible softmax over last dimension
+///
+/// Standard softmax: softmax(x) = exp(x - max(x)) / sum(exp(x - max(x)))
+/// This implementation uses operations that have Metal kernels.
+///
+/// Includes numerical stability improvements:
+/// - Clamp input to [-100, 100] to prevent overflow
+/// - Subtract max before exp
+/// - Add epsilon to sum to prevent division by zero
+fn softmax_last_dim_metal_compat(x: &Tensor) -> Result<Tensor> {
+    // Clamp to prevent extreme values
+    let clamped = x
+        .clamp(-100.0f32, 100.0f32)
+        .map_err(|e| TensorCoreError::Tensor(format!("softmax clamp failed: {}", e)))?;
+
+    // Get max for numerical stability
+    let max_vals = clamped
+        .max_keepdim(D::Minus1)
+        .map_err(|e| TensorCoreError::Tensor(format!("softmax max failed: {}", e)))?;
+
+    // Subtract max for numerical stability
+    let shifted = clamped
+        .broadcast_sub(&max_vals)
+        .map_err(|e| TensorCoreError::Tensor(format!("softmax shift failed: {}", e)))?;
+
+    // Compute exp
+    let exp_vals = shifted
+        .exp()
+        .map_err(|e| TensorCoreError::Tensor(format!("softmax exp failed: {}", e)))?;
+
+    // Sum for normalization (add epsilon to prevent div by zero)
+    let sum_vals = exp_vals
+        .sum_keepdim(D::Minus1)
+        .map_err(|e| TensorCoreError::Tensor(format!("softmax sum failed: {}", e)))?;
+
+    let sum_vals = sum_vals
+        .affine(1.0, 1e-10) // Add epsilon
+        .map_err(|e| TensorCoreError::Tensor(format!("softmax epsilon failed: {}", e)))?;
+
+    // Normalize
+    exp_vals
+        .broadcast_div(&sum_vals)
+        .map_err(|e| TensorCoreError::Tensor(format!("softmax div failed: {}", e)))
+}
+
+/// Apply multi-head self-attention
+///
+/// MultiHeadAttention(Q, K, V) = softmax(QK^T / sqrt(d_k)) V
+///
+/// This function auto-clamps attention weights to prevent NaN from weight explosion
+/// after gradient updates. This makes training stable without requiring manual
+/// calls to clamp_attention_weights() after each optimizer.step().
+fn apply_multi_head_attention(
+    x: &Tensor,
+    params: &AttentionParams,
+    dropout_rate: Option<f32>,
+) -> Result<Tensor> {
+    let (batch_size, _seq_len) = {
+        let shape = x.dims();
+        if shape.len() == 2 {
+            (shape[0], shape[1])
+        } else if shape.len() == 1 {
+            (1, shape[0])
+        } else {
+            return Err(TensorCoreError::Tensor(format!(
+                "Unexpected input shape for attention: {:?}",
+                shape
+            )));
+        }
+    };
+
+    // For single-sequence inputs, we treat each feature as a "token"
+    // Reshape to [batch, seq_len, 1] if needed for attention computation
+    let hidden_dim = params.num_heads * params.head_dim;
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // AUTO-CLAMP ATTENTION WEIGHTS (Fix for NaN after optimizer.step())
+    // ═══════════════════════════════════════════════════════════════════════════
+    // After gradient updates, Q/K/V/O weights can grow unbounded causing NaN
+    // in the next forward pass. We clamp weights here to ensure stability.
+    // This makes training "just work" without requiring users to manually call
+    // clamp_attention_weights() after every optimizer.step().
+    // Max value of 10.0 is chosen based on empirical testing - large enough to
+    // allow learning but small enough to prevent overflow in QK^T computation.
+    const ATTENTION_WEIGHT_MAX: f32 = 10.0;
+
+    let wq_clamped = params
+        .wq
+        .as_tensor()
+        .clamp(-ATTENTION_WEIGHT_MAX, ATTENTION_WEIGHT_MAX)
+        .map_err(|e| TensorCoreError::Tensor(format!("attention Wq clamp failed: {}", e)))?;
+    let wk_clamped = params
+        .wk
+        .as_tensor()
+        .clamp(-ATTENTION_WEIGHT_MAX, ATTENTION_WEIGHT_MAX)
+        .map_err(|e| TensorCoreError::Tensor(format!("attention Wk clamp failed: {}", e)))?;
+    let wv_clamped = params
+        .wv
+        .as_tensor()
+        .clamp(-ATTENTION_WEIGHT_MAX, ATTENTION_WEIGHT_MAX)
+        .map_err(|e| TensorCoreError::Tensor(format!("attention Wv clamp failed: {}", e)))?;
+    let wo_clamped = params
+        .wo
+        .as_tensor()
+        .clamp(-ATTENTION_WEIGHT_MAX, ATTENTION_WEIGHT_MAX)
+        .map_err(|e| TensorCoreError::Tensor(format!("attention Wo clamp failed: {}", e)))?;
+
+    // Project to Q, K, V using clamped weights
+    let q = x
+        .matmul(&wq_clamped)
+        .map_err(|e| TensorCoreError::Tensor(format!("attention Q projection failed: {}", e)))?;
+    let k = x
+        .matmul(&wk_clamped)
+        .map_err(|e| TensorCoreError::Tensor(format!("attention K projection failed: {}", e)))?;
+    let v = x
+        .matmul(&wv_clamped)
+        .map_err(|e| TensorCoreError::Tensor(format!("attention V projection failed: {}", e)))?;
+
+    // For a [batch, hidden_dim] input, we treat it as [batch, 1, hidden_dim]
+    // and compute self-attention across the hidden dimension
+    // This enables learning feature interactions
+
+    // Reshape Q, K, V to [batch, num_heads, head_dim]
+    let q = q
+        .reshape((batch_size, params.num_heads, params.head_dim))
+        .map_err(|e| TensorCoreError::Tensor(format!("attention Q reshape failed: {}", e)))?;
+    let k = k
+        .reshape((batch_size, params.num_heads, params.head_dim))
+        .map_err(|e| TensorCoreError::Tensor(format!("attention K reshape failed: {}", e)))?;
+    let v = v
+        .reshape((batch_size, params.num_heads, params.head_dim))
+        .map_err(|e| TensorCoreError::Tensor(format!("attention V reshape failed: {}", e)))?;
+
+    // Compute attention scores: Q @ K^T / sqrt(d_k)
+    // For each head: [batch, head_dim] @ [batch, head_dim]^T -> [batch, 1, 1]
+    // We compute dot product attention per head
+    let scale = (params.head_dim as f32).sqrt();
+
+    // Transpose K for matmul: [batch, num_heads, head_dim] -> [batch, head_dim, num_heads]
+    let k_t = k
+        .transpose(1, 2)
+        .map_err(|e| TensorCoreError::Tensor(format!("attention K transpose failed: {}", e)))?;
+
+    // Compute attention: [batch, num_heads, head_dim] @ [batch, head_dim, num_heads]
+    // -> [batch, num_heads, num_heads]
+    let mut scores = q
+        .matmul(&k_t)
+        .map_err(|e| TensorCoreError::Tensor(format!("attention scores matmul failed: {}", e)))?;
+
+    // Scale by 1/sqrt(d_k) to prevent large dot products
+    scores = scores
+        .affine(1.0 / scale as f64, 0.0)
+        .map_err(|e| TensorCoreError::Tensor(format!("attention scale failed: {}", e)))?;
+
+    // Clamp scores to prevent softmax overflow (values beyond [-50, 50] cause exp overflow)
+    scores = scores
+        .clamp(-50.0f32, 50.0f32)
+        .map_err(|e| TensorCoreError::Tensor(format!("attention score clamp failed: {}", e)))?;
+
+    // Softmax over last dimension (Metal-compatible implementation)
+    let attn_weights = softmax_last_dim_metal_compat(&scores)?;
+
+    // Apply attention dropout if specified
+    let attn_weights = if let Some(rate) = dropout_rate {
+        if rate > 0.0 {
+            apply_dropout(&attn_weights, rate)?
+        } else {
+            attn_weights
+        }
+    } else {
+        attn_weights
+    };
+
+    // Compute attention output: attn_weights @ V
+    // [batch, num_heads, num_heads] @ [batch, num_heads, head_dim] -> [batch, num_heads, head_dim]
+    let attn_output = attn_weights
+        .matmul(&v)
+        .map_err(|e| TensorCoreError::Tensor(format!("attention output matmul failed: {}", e)))?;
+
+    // Reshape back to [batch, hidden_dim]
+    let attn_output = attn_output
+        .reshape((batch_size, hidden_dim))
+        .map_err(|e| TensorCoreError::Tensor(format!("attention output reshape failed: {}", e)))?;
+
+    // Output projection using clamped weights
+    attn_output
+        .matmul(&wo_clamped)
+        .map_err(|e| TensorCoreError::Tensor(format!("attention output projection failed: {}", e)))
+}
+
+/// L2 normalize a tensor along the last dimension
+fn l2_normalize(x: &Tensor) -> Result<Tensor> {
+    let norm = x
+        .sqr()
+        .map_err(|e| TensorCoreError::Tensor(format!("sqr failed: {}", e)))?
+        .sum_keepdim(1)
+        .map_err(|e| TensorCoreError::Tensor(format!("sum failed: {}", e)))?
+        .sqrt()
+        .map_err(|e| TensorCoreError::Tensor(format!("sqrt failed: {}", e)))?;
+
+    // Add small epsilon to prevent division by zero
+    let eps = 1e-8;
+    let norm = norm
+        .affine(1.0, eps)
+        .map_err(|e| TensorCoreError::Tensor(format!("affine failed: {}", e)))?;
+
+    x.broadcast_div(&norm)
+        .map_err(|e| TensorCoreError::Tensor(format!("div failed: {}", e)))
+}
+
+/// Normalize adjacency matrix based on aggregation method
+fn normalize_adjacency(
+    adj: &Tensor,
+    aggregation: super::Aggregation,
+    _device: &Device,
+) -> Result<Tensor> {
+    match aggregation {
+        super::Aggregation::Mean => {
+            // Row-normalize: D^-1 @ A
+            let degree = adj
+                .sum_keepdim(1)
+                .map_err(|e| TensorCoreError::Tensor(format!("sum failed: {}", e)))?;
+            let degree = degree
+                .affine(1.0, 1e-8) // Prevent division by zero
+                .map_err(|e| TensorCoreError::Tensor(format!("affine failed: {}", e)))?;
+            adj.broadcast_div(&degree)
+                .map_err(|e| TensorCoreError::Tensor(format!("div failed: {}", e)))
+        }
+        super::Aggregation::Sum => {
+            // No normalization needed
+            Ok(adj.clone())
+        }
+        super::Aggregation::Max => {
+            // For max pooling, we'll handle it differently in message passing
+            // For now, just return the adjacency as-is
+            Ok(adj.clone())
+        }
+        super::Aggregation::Attention => {
+            // Attention weights would be computed dynamically
+            // For now, use mean aggregation as default
+            let degree = adj
+                .sum_keepdim(1)
+                .map_err(|e| TensorCoreError::Tensor(format!("sum failed: {}", e)))?;
+            let degree = degree
+                .affine(1.0, 1e-8)
+                .map_err(|e| TensorCoreError::Tensor(format!("affine failed: {}", e)))?;
+            adj.broadcast_div(&degree)
+                .map_err(|e| TensorCoreError::Tensor(format!("div failed: {}", e)))
+        }
+    }
+}
+
+// =============================================================================
+// SPARSE COO SUPPORT
+// =============================================================================
+
+/// Convert sparse COO format adjacency to dense matrix
+///
+/// Sparse COO format expects inputs as a HashMap with keys:
+/// - `{name}_row_indices`: \[nnz\] i64 tensor of row indices
+/// - `{name}_col_indices`: \[nnz\] i64 tensor of column indices
+/// - `{name}_values`: \[nnz\] f32 tensor of edge values (or None for all 1s)
+/// - `{name}_shape`: \[2\] i64 tensor with (num_rows, num_cols)
+///
+/// # Example
+///
+/// ```ignore
+/// // For a 5x5 graph with 3 edges: (0,1), (1,2), (2,0)
+/// inputs.insert("adj_row_indices".into(), Tensor::from_vec(vec![0i64, 1, 2], 3, &device)?);
+/// inputs.insert("adj_col_indices".into(), Tensor::from_vec(vec![1i64, 2, 0], 3, &device)?);
+/// inputs.insert("adj_shape".into(), Tensor::from_vec(vec![5i64, 5], 2, &device)?);
+/// // Values default to 1.0 if not provided
+/// ```
+pub fn sparse_coo_to_dense(
+    row_indices: &Tensor,
+    col_indices: &Tensor,
+    values: Option<&Tensor>,
+    shape: (usize, usize),
+    device: &Device,
+) -> Result<Tensor> {
+    let (num_rows, num_cols) = shape;
+
+    // Get indices as vectors
+    let rows = row_indices
+        .flatten_all()
+        .map_err(|e| TensorCoreError::Tensor(format!("flatten rows failed: {}", e)))?
+        .to_vec1::<i64>()
+        .map_err(|e| TensorCoreError::Tensor(format!("to_vec rows failed: {}", e)))?;
+
+    let cols = col_indices
+        .flatten_all()
+        .map_err(|e| TensorCoreError::Tensor(format!("flatten cols failed: {}", e)))?
+        .to_vec1::<i64>()
+        .map_err(|e| TensorCoreError::Tensor(format!("to_vec cols failed: {}", e)))?;
+
+    // Get values (default to 1.0)
+    let vals: Vec<f32> = if let Some(v) = values {
+        v.flatten_all()
+            .map_err(|e| TensorCoreError::Tensor(format!("flatten values failed: {}", e)))?
+            .to_vec1::<f32>()
+            .map_err(|e| TensorCoreError::Tensor(format!("to_vec values failed: {}", e)))?
+    } else {
+        vec![1.0f32; rows.len()]
+    };
+
+    // Validate lengths match
+    if rows.len() != cols.len() || rows.len() != vals.len() {
+        return Err(TensorCoreError::Tensor(format!(
+            "Sparse COO dimension mismatch: rows={}, cols={}, values={}",
+            rows.len(),
+            cols.len(),
+            vals.len()
+        )));
+    }
+
+    // Build dense matrix
+    let mut dense = vec![0.0f32; num_rows * num_cols];
+    for ((&r, &c), &v) in rows.iter().zip(cols.iter()).zip(vals.iter()) {
+        let r = r as usize;
+        let c = c as usize;
+        if r < num_rows && c < num_cols {
+            dense[r * num_cols + c] = v;
+        }
+    }
+
+    Tensor::from_vec(dense, (num_rows, num_cols), device)
+        .map_err(|e| TensorCoreError::Tensor(format!("create dense tensor failed: {}", e)))
+}
+
+/// Check if sparse COO inputs are present for a given adjacency name
+///
+/// Returns Some((row_indices, col_indices, values, shape)) if sparse format detected,
+/// None if regular dense tensor should be used.
+type SparseCooInputs<'a> = (&'a Tensor, &'a Tensor, Option<&'a Tensor>, (usize, usize));
+
+/// Detect sparse-COO adjacency inputs (`{name}_rows`, `{name}_cols`, optional
+/// `{name}_values`) for graph predicates, falling back to dense otherwise.
+pub fn detect_sparse_coo<'a>(
+    inputs: &'a HashMap<String, Tensor>,
+    adjacency_name: &str,
+) -> Option<SparseCooInputs<'a>> {
+    let row_key = format!("{}_row_indices", adjacency_name);
+    let col_key = format!("{}_col_indices", adjacency_name);
+    let shape_key = format!("{}_shape", adjacency_name);
+    let values_key = format!("{}_values", adjacency_name);
+
+    let row_indices = inputs.get(&row_key)?;
+    let col_indices = inputs.get(&col_key)?;
+    let shape_tensor = inputs.get(&shape_key)?;
+    let values = inputs.get(&values_key);
+
+    // Parse shape
+    let shape_vec = shape_tensor.flatten_all().ok()?.to_vec1::<i64>().ok()?;
+
+    if shape_vec.len() != 2 {
+        return None;
+    }
+
+    let shape = (shape_vec[0] as usize, shape_vec[1] as usize);
+
+    Some((row_indices, col_indices, values, shape))
+}
+
+/// Get adjacency matrix, handling both dense and sparse COO formats
+///
+/// If sparse COO format is detected (via `{name}_row_indices`, `{name}_col_indices`,
+/// `{name}_shape`), converts to dense. Otherwise, returns the dense matrix directly.
+pub fn get_adjacency_matrix(
+    inputs: &HashMap<String, Tensor>,
+    adjacency_name: &str,
+    device: &Device,
+) -> Result<Tensor> {
+    // Check for sparse COO format first
+    if let Some((row_indices, col_indices, values, shape)) =
+        detect_sparse_coo(inputs, adjacency_name)
+    {
+        return sparse_coo_to_dense(row_indices, col_indices, values, shape, device);
+    }
+
+    // Fall back to dense format
+    inputs.get(adjacency_name).cloned().ok_or_else(|| {
+        TensorCoreError::Compiler(format!(
+            "Missing adjacency matrix '{}'. Provide either:\n  \
+             - Dense: inputs[\"{}\"] = [n, n] tensor\n  \
+             - Sparse COO: inputs[\"{}_row_indices\"], inputs[\"{}_col_indices\"], inputs[\"{}_shape\"]",
+            adjacency_name, adjacency_name, adjacency_name, adjacency_name, adjacency_name
+        ))
+    })
+}
+
+// =============================================================================
+// COMPILED LITERAL
 // =============================================================================
 
 /// A compiled literal (possibly negated predicate)
@@ -779,13 +1352,24 @@ impl CompiledBody {
             });
         }
 
-        // Evaluate first literal
+        // Evaluate first literal. Flatten each activation to 1-D before
+        // fuzzy_and so mixed-rank predicate outputs (Threshold on a
+        // `[1,1]` input vs LearnedProjection's squeezed `[1]`) still
+        // conjunction-cleanly. See Threshold evaluate comment above.
         let first_lit = &self.literals[0];
-        let mut result = first_lit.evaluate(&predicate_activations[first_lit.predicate_idx])?;
+        let mut result = first_lit
+            .evaluate(&predicate_activations[first_lit.predicate_idx])?
+            .flatten_all()
+            .map_err(|e| TensorCoreError::Tensor(format!("body literal flatten failed: {}", e)))?;
 
         // AND with remaining literals
         for lit in &self.literals[1..] {
-            let lit_result = lit.evaluate(&predicate_activations[lit.predicate_idx])?;
+            let lit_result = lit
+                .evaluate(&predicate_activations[lit.predicate_idx])?
+                .flatten_all()
+                .map_err(|e| {
+                    TensorCoreError::Tensor(format!("body literal flatten failed: {}", e))
+                })?;
             result = fuzzy_and(&result, &lit_result)?;
         }
 
@@ -1042,7 +1626,7 @@ impl CompiledRuleSet {
     /// # Arguments
     ///
     /// * `batch_inputs` - Vec of input HashMaps, one per sample.
-    ///   Each input tensor should have shape `[1, features]` or `[features]`.
+    ///   Each input tensor should have shape \[1, features\] or \[features\].
     ///
     /// # Returns
     ///
@@ -2141,13 +2725,14 @@ mod tests {
 
         let output = compiled.forward(&inputs).unwrap();
 
-        // Should return per-node predictions
-        let result = output.output.to_vec2::<f32>().unwrap();
+        // Should return per-node predictions (1-D: one score per node, consistent
+        // with other predicates — see the `squeeze(1)` in the GraphNeural path).
+        let result = output.output.to_vec1::<f32>().unwrap();
         assert_eq!(result.len(), 3); // 3 nodes
 
         // All values should be in [0, 1]
-        for row in result {
-            assert!(row[0] >= 0.0 && row[0] <= 1.0);
+        for &v in &result {
+            assert!((0.0..=1.0).contains(&v), "out of range: {v}");
         }
     }
 
@@ -2231,18 +2816,18 @@ mod tests {
 
         let output = compiled.forward(&inputs).unwrap();
 
-        // Should return per-node predictions
-        let result = output.output.to_vec2::<f32>().unwrap();
+        // Should return per-node predictions (1-D: one score per node).
+        let result = output.output.to_vec1::<f32>().unwrap();
         assert_eq!(result.len(), 5); // 5 nodes
 
         // All values should be in [0, 1] and not NaN
-        for (i, row) in result.iter().enumerate() {
-            assert!(!row[0].is_nan(), "NaN at node {}", i);
+        for (i, &v) in result.iter().enumerate() {
+            assert!(!v.is_nan(), "NaN at node {}", i);
             assert!(
-                row[0] >= 0.0 && row[0] <= 1.0,
+                (0.0..=1.0).contains(&v),
                 "Out of range at node {}: {}",
                 i,
-                row[0]
+                v
             );
         }
     }
@@ -2294,7 +2879,8 @@ mod tests {
         );
 
         let output = compiled.forward(&inputs).unwrap();
-        assert_eq!(output.output.dims(), &[3, 1]);
+        // 1-D output: one score per node (consistent with other predicates).
+        assert_eq!(output.output.dims(), &[3]);
     }
 
     #[test]

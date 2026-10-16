@@ -48,9 +48,6 @@ pub struct InputBuffer {
     /// Backing storage for scalar inputs (CPU side)
     scalars: Vec<f32>,
 
-    /// Total feature count (retained for future buffer validation)
-    _feature_count: usize,
-
     /// Device
     device: Device,
 
@@ -60,7 +57,7 @@ pub struct InputBuffer {
 
 impl InputBuffer {
     /// Create a new input buffer with pre-allocated tensors
-    pub fn new(input_names: &[&str], feature_count: usize, device: &Device) -> Result<Self> {
+    pub fn new(input_names: &[&str], _feature_count: usize, device: &Device) -> Result<Self> {
         let mut names = Vec::with_capacity(input_names.len());
         let mut name_to_idx = HashMap::with_capacity(input_names.len());
         let mut tensors = Vec::with_capacity(input_names.len());
@@ -82,7 +79,6 @@ impl InputBuffer {
             name_to_idx,
             tensors,
             scalars,
-            _feature_count: feature_count,
             device: device.clone(),
             dirty: true,
         })
@@ -100,14 +96,11 @@ impl InputBuffer {
             tensors.push(inputs.get(name).unwrap().clone());
         }
 
-        let feature_count = tensors.len();
-
         Ok(Self {
             names,
             name_to_idx,
             tensors,
             scalars,
-            _feature_count: feature_count,
             device: device.clone(),
             dirty: false,
         })

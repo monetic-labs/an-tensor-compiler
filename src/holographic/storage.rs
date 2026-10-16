@@ -31,7 +31,6 @@ pub struct TensorStore {
 }
 
 impl TensorStore {
-    /// Create a new tensor store at the given base path
     pub fn new(base_path: impl AsRef<Path>, device: Device) -> Self {
         Self {
             base_path: base_path.as_ref().to_path_buf(),
@@ -535,7 +534,6 @@ pub struct CacheEntry {
 }
 
 impl ComponentCache {
-    /// Create a new component cache at the given directory
     pub fn new(cache_dir: impl AsRef<Path>, device: Device) -> Self {
         let cache_dir = cache_dir.as_ref().to_path_buf();
         let index = Self::load_index(&cache_dir).unwrap_or_default();
@@ -717,11 +715,8 @@ impl ComponentCache {
 /// Cache statistics
 #[derive(Debug, Clone)]
 pub struct CacheStats {
-    /// Number of cached file entries
     pub total_entries: usize,
-    /// Total number of cached component tensors
     pub total_components: usize,
-    /// Path to the cache directory
     pub cache_dir: PathBuf,
 }
 
@@ -730,12 +725,6 @@ pub struct CacheStats {
 // ============================================================================
 
 /// Tracks which files need re-encoding
-///
-/// # Requirements
-///
-/// This type requires `git` to be available on the system PATH.
-/// If git is not available, [`IncrementalState::analyze()`] will return an error.
-/// In environments without git, treat all files as changed (full re-encoding).
 pub struct IncrementalState {
     /// Previous commit hash
     pub previous_commit: Option<String>,
@@ -817,49 +806,57 @@ impl IncrementalState {
     }
 }
 
+/// Check if git is available and the directory is a git repository
+fn git_available(root: &Path) -> bool {
+    std::process::Command::new("git")
+        .args(["rev-parse", "--git-dir"])
+        .current_dir(root)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
 /// Get current git commit
 ///
-/// Requires `git` on PATH. Returns an error if git is unavailable or the
-/// directory is not a git repository.
+/// Returns `None` if git is not available or not a git repository.
+/// Callers should fall back to full re-encoding when git state is unavailable.
 fn get_current_commit(root: &Path) -> Result<String> {
+    if !git_available(root) {
+        return Err(TensorCoreError::Config(
+            "Git not available or not a git repository — incremental encoding disabled, \
+             all files will be processed. Install git for incremental support."
+                .into(),
+        ));
+    }
+
     let output = std::process::Command::new("git")
         .args(["rev-parse", "HEAD"])
         .current_dir(root)
         .output()
-        .map_err(|e| {
-            TensorCoreError::Config(format!(
-                "Git not available (required for incremental encoding): {}. \
-             Install git or use full re-encoding instead.",
-                e
-            ))
-        })?;
+        .map_err(|e| TensorCoreError::Config(format!("Git rev-parse failed: {}", e)))?;
 
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        Err(TensorCoreError::Config(format!(
-            "Not a git repository at '{}': {}",
-            root.display(),
-            stderr.trim()
-        )))
+        Err(TensorCoreError::Config(
+            "Not a git repository — incremental encoding disabled".into(),
+        ))
     }
 }
 
 /// Get files changed between commits
 ///
-/// Returns only `.rs` files that differ between `since_commit` and HEAD.
+/// Returns empty set if git is not available (caller processes all files).
 fn get_changed_files(root: &Path, since_commit: &str) -> Result<HashSet<PathBuf>> {
+    if !git_available(root) {
+        return get_all_rust_files(root);
+    }
+
     let output = std::process::Command::new("git")
         .args(["diff", "--name-only", since_commit, "HEAD"])
         .current_dir(root)
         .output()
-        .map_err(|e| {
-            TensorCoreError::Config(format!(
-                "Git diff failed (required for incremental encoding): {}",
-                e
-            ))
-        })?;
+        .map_err(|e| TensorCoreError::Config(format!("Git diff failed: {}", e)))?;
 
     let mut files = HashSet::new();
 
@@ -875,41 +872,44 @@ fn get_changed_files(root: &Path, since_commit: &str) -> Result<HashSet<PathBuf>
     Ok(files)
 }
 
-/// Get all Rust files in a project via `git ls-files`
+/// Get all Rust files in a project
 ///
-/// Falls back to walkdir-based discovery if git is unavailable.
+/// Uses git ls-files if available, falls back to walkdir for non-git contexts.
 fn get_all_rust_files(root: &Path) -> Result<HashSet<PathBuf>> {
-    let output = std::process::Command::new("git")
-        .args(["ls-files", "*.rs"])
-        .current_dir(root)
-        .output();
+    // Try git first
+    if git_available(root) {
+        let output = std::process::Command::new("git")
+            .args(["ls-files", "*.rs"])
+            .current_dir(root)
+            .output()
+            .map_err(|e| TensorCoreError::Config(format!("Git ls-files failed: {}", e)))?;
 
-    match output {
-        Ok(output) if output.status.success() => {
+        if output.status.success() {
             let mut files = HashSet::new();
             let all = String::from_utf8_lossy(&output.stdout);
             for line in all.lines() {
                 files.insert(root.join(line));
             }
-            Ok(files)
-        }
-        _ => {
-            // Fallback: walk directory tree for .rs files
-            let mut files = HashSet::new();
-            for entry in walkdir::WalkDir::new(root)
-                .into_iter()
-                .filter_map(|e| e.ok())
-            {
-                let path = entry.path();
-                if path.extension().is_some_and(|ext| ext == "rs")
-                    && !path.to_string_lossy().contains("/target/")
-                {
-                    files.insert(path.to_path_buf());
-                }
-            }
-            Ok(files)
+            return Ok(files);
         }
     }
+
+    // Fallback: walk the filesystem
+    let mut files = HashSet::new();
+    for entry in walkdir::WalkDir::new(root)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        let path = entry.path();
+        if path.extension().map(|e| e == "rs").unwrap_or(false) {
+            // Skip target/ and hidden directories
+            let path_str = path.to_string_lossy();
+            if !path_str.contains("/target/") && !path_str.contains("/.") {
+                files.insert(path.to_path_buf());
+            }
+        }
+    }
+    Ok(files)
 }
 
 // ============================================================================

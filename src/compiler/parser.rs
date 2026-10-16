@@ -202,7 +202,7 @@ fn conjunction(input: &str) -> IResult<&str, Vec<Literal>> {
 }
 
 /// Parse a disjunction (OR of conjunctions)
-/// Returns `Vec<Vec<Literal>>` where outer vec is OR, inner vec is AND
+/// Returns Vec<Vec<Literal>> where outer vec is OR, inner vec is AND
 fn disjunction(input: &str) -> IResult<&str, Vec<Vec<Literal>>> {
     separated_list1(tuple((ws0, or_op, ws0)), conjunction)(input)
 }
