@@ -64,7 +64,7 @@ impl HrrArtifact {
         let json = serde_json::to_string(&s).unwrap_or_else(|_| "{}".to_string());
         let mut hasher = Sha256::new();
         hasher.update(json.as_bytes());
-        format!("{:x}", hasher.finalize())
+        hex::encode(hasher.finalize())
     }
 
     /// Seal with a checksum over current contents (builder style).
