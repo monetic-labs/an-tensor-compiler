@@ -1,0 +1,42 @@
+name: Bug report
+description: Something broken in the compiler, predicates, or docs
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Crate version
+      placeholder: 0.2.1
+    validations:
+      required: true
+  - type: dropdown
+    id: features
+    attributes:
+      label: Features enabled
+      options:
+        - default (CPU)
+        - metal
+        - cuda
+    validations:
+      required: true
+  - type: input
+    id: toolchain
+    attributes:
+      label: Toolchain (`rustc -V`)
+      placeholder: rustc 1.92.0 stable
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: Smallest rule spec / snippet that shows the bug.
+      render: rust
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected vs actual behavior
+    validations:
+      required: true

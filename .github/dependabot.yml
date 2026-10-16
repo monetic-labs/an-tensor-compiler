@@ -1,0 +1,12 @@
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels: [dependencies]
+    # Candle upgrades move the math substrate: review benchmarks, not just CI.
+    # The zip saga (Oct 2026) is why this file exists — yanked transitive deps
+    # break fresh resolution with no code change on our side.

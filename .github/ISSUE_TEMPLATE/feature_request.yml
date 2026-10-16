@@ -1,0 +1,36 @@
+name: Feature request
+description: New predicate types, compiler features, or module ideas
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: The use case, not just the API you want.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed shape
+      description: Sketch the RuleSpec, predicate type, or API surface.
+      render: rust
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - compiler / DSL
+        - predicates
+        - holographic memory
+        - governance
+        - federation / CRDT
+        - policy packs / DSL
+        - docs / examples
+        - other
+  - type: checkboxes
+    id: contrib
+    attributes:
+      label: Contribution
+      options:
+        - label: I would like to implement this (happy to be pointed at extension points)
