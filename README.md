@@ -282,4 +282,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Pull requests are welcome. The compiler 
 
 ## License
 
-Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
+GNU General Public License v3.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
+
+This is strong copyleft: if you build on this crate and distribute the result,
+you must release your complete source under the same terms. Corporations and
+proprietary products are welcome to use it — on those terms.

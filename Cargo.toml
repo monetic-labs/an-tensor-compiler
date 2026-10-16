@@ -2,7 +2,7 @@
 name = "an-tensor-compiler"
 version = "0.2.0"
 edition = "2021"
-license = "Apache-2.0"
+license = "GPL-3.0-only"
 authors = ["an-ecosystem team"]
 description = "Differentiable neuro-symbolic compiler: symbolic logic rules → tensor equations with full gradient flow. Optional GPU acceleration via Metal/CUDA."
 repository = "https://github.com/monetic-labs/an-tensor-compiler"

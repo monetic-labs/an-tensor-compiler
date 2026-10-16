@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Major sync with eight months of `an-tensor-core` development: test suite grows
 from 225 to 597 lib tests, and the crate gains six new modules.
 
+**License change**: Apache-2.0 → GPL-3.0-only (strong copyleft). Distributing
+anything built on this crate requires releasing complete source under the
+same terms. See [LICENSE](LICENSE).
+
 ### Added
 
 - **Governance core** (new `governance` module): auto-derived L0 structural

@@ -32,7 +32,7 @@ cargo clippy --all-targets -- -D warnings
 
 ## Architecture
 
-The crate is organized into 7 modules:
+The crate is organized into 14 modules:
 
 | Module | Purpose |
 |---|---|
@@ -40,9 +40,17 @@ The crate is organized into 7 modules:
 | `primitives/` | Fuzzy logic operators, activations, device management |
 | `namespace/` | Gradient isolation between domains |
 | `federation/` | Cross-domain parameter merging |
-| `holographic/` | Holographic reduced representations for distributed memory |
+| `holographic/` | Holographic memory + knowledge spaces |
 | `crdt/` | Conflict-free tensor synchronization |
 | `training/` | Optimizers, gradient utilities, metrics |
+| `governance/` | Static verification: L0 checks, margins, sorts |
+| `interaction/` | Chat safety + quality policy pack |
+| `counterops/` | Threat + defense policy pack |
+| `compliance/` | PII/compliance policy pack |
+| `dsl/` | Workflow/tool/context DSL execution |
+| `information/` | Streaming info-theory + Monte Carlo stats |
+| `topology/` | Lyapunov regime detection |
+| `scheduling/` | DAG readiness, topo levels, makespan |
 
 ### Key Extension Points
 
@@ -85,4 +93,5 @@ The crate is organized into 7 modules:
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the Apache License 2.0.
+By contributing, you agree that your contributions will be licensed under the
+GNU General Public License v3.0 (GPL-3.0-only), the same license as the crate.
