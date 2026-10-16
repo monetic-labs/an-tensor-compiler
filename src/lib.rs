@@ -47,11 +47,24 @@
 //! - `cuda`: NVIDIA CUDA GPU acceleration
 
 pub mod compiler;
+pub mod compliance;
+pub mod counterops;
 pub mod crdt;
+// SYNC DEBT (v0.2.0 port): ported modules below allow missing docs until the
+// upstream `an-tensor-core` adopts `#![warn(missing_docs)]` and documents them
+// at the source. New hand-written public modules must keep full rustdoc.
+#[allow(missing_docs)]
+pub mod dsl;
 pub mod federation;
+#[allow(missing_docs)]
+pub mod governance;
 pub mod holographic;
+pub mod information;
+pub mod interaction;
 pub mod namespace;
 pub mod primitives;
+pub mod scheduling;
+pub mod topology;
 pub mod training;
 
 // Re-export candle types for convenience
@@ -87,6 +100,22 @@ pub enum TensorCoreError {
     /// A training operation failed (optimizer step, gradient computation)
     #[error("Training error: {0}")]
     Training(String),
+
+    /// A validation error (tensor validation, data checks)
+    #[error("Validation error: {0}")]
+    Validation(String),
+
+    /// A holographic projection error
+    #[error("Projection error: {0}")]
+    Projection(String),
+
+    /// A predicate-governance error
+    #[error("Governance error: {0}")]
+    Governance(String),
+
+    /// An information-theory error
+    #[error("Information theory error: {0}")]
+    Information(String),
 
     /// An I/O operation failed
     #[error("IO error: {0}")]
@@ -164,7 +193,10 @@ pub mod prelude {
     };
 
     // Holographic
-    pub use crate::holographic::{bind, project, superimpose, unbind};
+    pub use crate::holographic::{bind, bundle_record, project, superimpose, unbind, unbind_role};
+
+    // Governance (static verification core)
+    pub use crate::governance::{check_property, derive_l0, propagate_margins, sort_check};
 }
 
 #[cfg(test)]
