@@ -29,7 +29,7 @@ serde_yaml = "0.9"
 thiserror = "1.0"
 
 # Parsing (for rule DSL)
-nom = "7.1"
+nom = "8.0"
 
 # Async (for federation transport trait)
 async-trait = "0.1"
