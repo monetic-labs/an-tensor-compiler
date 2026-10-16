@@ -44,6 +44,7 @@ let spec = RuleSpec::parse("policy", r#"
 let compiled = CompiledRule::compile(spec)?;
 
 // Evaluate with fuzzy inputs (values in [0, 1])
+let device = best_device();
 let mut inputs = HashMap::new();
 inputs.insert("high_risk".into(), Tensor::from_vec(vec![0.9f32], 1, &device)?);
 inputs.insert("approved".into(), Tensor::from_vec(vec![0.2f32], 1, &device)?);
@@ -51,7 +52,7 @@ inputs.insert("critical_resource".into(), Tensor::from_vec(vec![0.5f32], 1, &dev
 inputs.insert("low_confidence".into(), Tensor::from_vec(vec![0.7f32], 1, &device)?);
 
 let output = compiled.forward(&inputs)?;
-println!("Score: {:.3}", output.output.to_scalar::<f32>()?);
+println!("Score: {:.3}", output.output.to_vec1::<f32>()?[0]);
 println!("Why: {}", output.explanation);
 ```
 
@@ -150,6 +151,8 @@ Parse → validate → compile → execute. The rule DSL supports Prolog-style (
 | `TierLookup` | Multi-threshold step function | Tier boundaries |
 | `PairwiseDifference` | Detect gaps between items | Threshold percentage |
 | `CascadingLookup` | Priority-ordered fallback chain | Priority weights |
+| `Composite` | Named AND/OR/NOT over children (reserved; express as rules for now) | None |
+| `External` | Caller-supplied truth value | None (provided at runtime) |
 
 Think of it as: Prolog gives you the structure. Tensors give you the substrate. Gradients close the loop.
 
@@ -238,23 +241,31 @@ The `dsl` module compiles agent-style workflow DAGs, tool patterns, and context 
 Compiled rules are trainable via standard gradient descent:
 
 ```rust
+use candle_nn::optim::{AdamW, ParamsAdamW};
+
 let compiled = CompiledRule::compile(spec)?;
 let vars = compiled.trainable_vars();
-let mut optimizer = AdamW::new(vars.clone(), params)?;
+let params = ParamsAdamW { lr: 0.01, ..Default::default() };
+let mut optimizer = AdamW::new(vars.clone(), params)
+    .map_err(|e| TensorCoreError::Tensor(format!("optimizer: {e}")))?;
 
 for batch in data {
     let output = compiled.forward_fast(&batch.inputs)?;
     let loss = binary_cross_entropy(&output, &batch.target)?;
-    let grads = loss.backward()?;
-    
+    let grads = loss
+        .backward()
+        .map_err(|e| TensorCoreError::Tensor(format!("backward: {e}")))?;
+
     // Safe step with gradient clipping (recommended for attention)
-    safe_optimizer_step(&mut optimizer, &grads, &vars, 1.0, 0.001)?;
+    safe_optimizer_step(&mut optimizer, &grads, &vars, 1.0, 0.01)?;
     compiled.clamp_attention_weights(10.0)?;
 }
 
 // Save learned parameters
 compiled.save("model.safetensors")?;
 ```
+
+See `examples/training_loop.rs` for the complete runnable version.
 
 FiLM conditioning (Feature-wise Linear Modulation) lets a conditioning vector modulate hidden activations — useful when the same rules should behave differently based on context. Separate learning rate groups (`GroupedOptimizer`) prevent FiLM layers from being overwhelmed by the main network's gradients.
 

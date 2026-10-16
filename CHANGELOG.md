@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-10-15
+
+Docs-only patch. No code changes.
+
+### Fixed
+
+- README Quick Start defines its device, reads scores the way `forward`
+  shapes them, and now compiles and runs verbatim.
+- README Training snippet matches `examples/training_loop.rs` (optimizer
+  construction, backward error mapping) and links the runnable example.
+- Predicate table adds `Composite` (reserved; express as rules) and
+  `External` rows.
+
 ## [0.2.0] - 2026-10-15
 
 Major sync with eight months of `an-tensor-core` development: test suite grows
