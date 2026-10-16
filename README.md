@@ -55,23 +55,23 @@ println!("Score: {:.3}", output.output.to_scalar::<f32>()?);
 println!("Why: {}", output.explanation);
 ```
 
-See [`examples/`](examples/) for complete runnable demos: basic rules, learned projections, multi-head policies, and training loops.
+See [`examples/`](examples/) for complete runnable demos: basic rules, learned projections, multi-head policies, training loops, governance checks, holographic memory, and policy packs.
 
 ## Installation
 
 ```toml
 [dependencies]
-an-tensor-compiler = "0.1"
+an-tensor-compiler = "0.2"
 ```
 
 ### GPU Acceleration
 
 ```toml
 # Apple Silicon (M1/M2/M3/M4)
-an-tensor-compiler = { version = "0.1", features = ["metal"] }
+an-tensor-compiler = { version = "0.2", features = ["metal"] }
 
 # NVIDIA GPU
-an-tensor-compiler = { version = "0.1", features = ["cuda"] }
+an-tensor-compiler = { version = "0.2", features = ["cuda"] }
 ```
 
 ### Requirements
@@ -118,15 +118,22 @@ The right choice depends on your workload shape. Read-heavy fan-out (evaluate ru
 ## Architecture
 
 ```text
-┌─────────────────────────────────────────────────────────────────┐
-│                        an-tensor-compiler                       │
-├──────────┬──────────┬────────────┬──────────┬──────────┬────────┤
-│ compiler │primitives│  namespace │federation│holographic│  crdt  │
-│          │          │            │          │          │        │
-│ DSL →    │ fuzzy    │ gradient   │ cross-   │ HRR      │conflict│
-│ tensor   │ logic    │ isolation  │ domain   │ memory   │-free   │
-│ functions│ ops      │ boundaries │ merge    │          │ sync   │
-└──────────┴──────────┴────────────┴──────────┴──────────┴────────┘
+┌───────────────────────────────────────────────────────────────────────────────┐
+│                              an-tensor-compiler                             │
+├──────────┬──────────┬──────────┬───────────┬───────────┬────────┬───────────┤
+│ compiler │primitives│ namespace│ federation│holographic│  crdt  │governance │
+│          │          │          │           │           │        │           │
+│ DSL →    │ fuzzy    │ gradient │ cross-    │ HRR       │conflict│ L0 checks │
+│ tensor   │ logic    │ isolation│ domain    │ memory +  │-free   │ margins + │
+│ functions│ ops      │ boundaries│ merge    │ knowledge │ sync   │ sorts     │
+│          │          │          │           │ spaces    │        │           │
+├──────────┴──────────┴──────────┴───────────┴───────────┴────────┴───────────┤
+│ interaction │ counterops │ compliance │ dsl │ information │ topology │sched. │
+│             │            │            │     │             │          │       │
+│ chat safety │ threat +   │ PII/GDPR/  │work-│ streaming   │ Lyapunov │ DAG   │
+│ intent +    │ anomaly +  │ HIPAA/SOX  │flow │ entropy +   │ regimes  │ topo  │
+│ quality     │ defense    │ packs      │ DSL │ MC stats    │          │ utils │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Compiler
@@ -145,6 +152,8 @@ Parse → validate → compile → execute. The rule DSL supports Prolog-style (
 | `CascadingLookup` | Priority-ordered fallback chain | Priority weights |
 
 Think of it as: Prolog gives you the structure. Tensors give you the substrate. Gradients close the loop.
+
+The `predicate_builders` module provides canonical constructors for common declarative invariants (non-negativity, ranges, tolerance bands, monotone history, allowed-set distance) as single `Threshold` specs that compose cleanly under `fuzzy_and`.
 
 ### Primitives
 
@@ -181,6 +190,8 @@ This isn't an embedding database. There's no index, no retrieval pipeline, no ne
 
 The practical consequence: you can represent an entire codebase, knowledge graph, or document corpus as a single tensor, and query it with a matrix multiply.
 
+Beyond the core ops, the module now includes HRR v2: neutral `KnowledgeSpaceTensor` / `EntityTensor` / `RelationTensor` primitives, explicit `BridgeBinding` cross-space projection with policy control, the embedder-agnostic `HrrEmbedder` + `HrrQuery` query protocol, `EmbedderProvenance` (content hash + source URI, so a query can verify it is projecting into the geometry the corpus was compiled against), multi-resolution holograms (fast L1 / deep L2 with confidence escalation), a geometric index for sublinear retrieval, and full memory systems — `ExperienceHologram`, `PatternLibrary` (failure signatures + recovery rates), `WorkingMemory` (salience decay), entropy-gated consolidation, Lyapunov regime partitioning, and multi-scale horizons — unified behind `SynapseMemory` with a caller-supplied embedder.
+
 ### CRDTs
 
 Conflict-free replicated data types for tensor synchronization across devices. When multiple nodes update the same tensor concurrently, CRDTs guarantee convergence without coordination — no locks, no consensus protocol, no conflict resolution logic. You get eventual consistency by mathematical construction.
@@ -205,6 +216,22 @@ device_a.merge_max(&device_b);
 The merge strategies are tensor-aware: `ElementMax` for attention maps (preserve strongest signal), `Superimpose` for holographic memory (concepts stack), `WeightedAverage` with decay for evolving state. Vector clocks track causality so you know which updates have been seen.
 
 This matters because the systems you build with differentiable logic are inherently distributed. Models train on different data. Devices see different contexts. Federation merges learned parameters. CRDTs are the substrate that makes all of this converge without a coordinator.
+
+### Governance
+
+Static verification for your rules, before you train them. Given a `RuleSpec`, the governance core auto-derives L0 structural properties (body satisfiability, head coverage/non-triviality, exclusion sets, trigger presence, definedness) and checks them over the boolean skeleton with the in-house F0 checker — or emits SMT-LIB for external solvers. A closed-form margin calculus propagates leaf margins through the rule DAG; where the output margin goes non-positive, the head is honestly marked *unresolvable-at-margin* instead of silently flipping (product-AND does not commute with thresholding — five leaves at 0.8 give 0.33). A sort system (`Truth` vs `Score` vs `Index` vs `Count`) keeps counts and magnitudes from silently flowing into probabilistic combinators. See `examples/governance_demo.rs`.
+
+### Policy Packs
+
+Batteries-included predicate sets with ready-made rules: `interaction` (chat safety, intent clarity, context freshness, coherence, topic drift, escalation, frustration), `counterops` (threat level, anomaly scoring, injection detection, exfiltration risk, defense mode, auth anomalies), and `compliance` (PII detection, GDPR/HIPAA/SOX configurations, retention, breach detection, audit reporting). Each pack ships single-head and multi-head rule templates. See `examples/policy_packs.rs`.
+
+### Workflow DSL
+
+The `dsl` module compiles agent-style workflow DAGs, tool patterns, and context graphs into tensor execution: `TensorWorkflowExecutor` (compile DAG, batched execute, compensate), `TensorPatternMatcher` (embed patterns, similarity retrieval, strategy routing), and `TensorContextManager` (temporal decay, activation propagation, promotion gates) — plus a `scheduling` module with DAG readiness, topological levels, critical path, and concurrency-aware makespan.
+
+### Math Toolkit
+
+`information` (streaming entropy/MI/drift/novelty, Monte Carlo statistics: bootstrap, permutation tests, importance sampling, MCMC, jackknife) and `topology` (Lyapunov-exponent regime detection) support the memory systems above and are useful standalone.
 
 ## Training
 
@@ -243,7 +270,7 @@ FiLM conditioning (Feature-wise Linear Modulation) lets a conditioning vector mo
 
 The core ideas draw from three research threads:
 
-- **Pedro Domingos** — Unifying logical and statistical AI. The insight that symbolic rules can be compiled into differentiable tensor operations without losing interpretability or learnability. (*"Every Model Learned by Gradient Descent Is Approximately a Kernel Machine"*, arXiv:2012.00152)
+- **Pedro Domingos** — Unifying logical and statistical AI. The insight that symbolic rules can be compiled into differentiable tensor operations without losing interpretability or learnability — from kernel machines (arXiv:2012.00152) to the full logic↔tensor isomorphism (*"Tensor Logic"*, arXiv:2510.12269), which this crate implements.
 - **Lotfi Zadeh** — Fuzzy logic (1965). Continuous truth values in \[0, 1\] instead of {0, 1}, enabling gradient flow through logical operations.
 - **Tony Plate** — Holographic Reduced Representations (1995). Circular convolution binding for distributed compositional memory where every piece contains information about the whole.
 
