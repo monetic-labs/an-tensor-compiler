@@ -1558,7 +1558,11 @@ mod tests {
             },
         );
 
-        let compiled = CompiledRule::compile(spec.clone()).unwrap();
+        // Pin to CPU: the test inputs below are CPU tensors, and the default
+        // compile device is Metal when the `metal` feature is on (device
+        // mismatch in matmul otherwise).
+        let compiled =
+            CompiledRule::compile_on_device(spec.clone(), &candle_core::Device::Cpu).unwrap();
 
         // Create test input
         let mut inputs = std::collections::HashMap::new();
@@ -1586,7 +1590,8 @@ mod tests {
         compiled.save(&temp_path).unwrap();
 
         // Load into new instance
-        let mut loaded = CompiledRule::compile(spec).unwrap();
+        let mut loaded =
+            CompiledRule::compile_on_device(spec, &candle_core::Device::Cpu).unwrap();
         loaded.load(&temp_path).unwrap();
 
         // Get output after load
