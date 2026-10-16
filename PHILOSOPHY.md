@@ -21,8 +21,10 @@ His research on unifying logical and statistical AI, particularly the
 demonstration that gradient descent operates in kernel space, informed our
 approach to making symbolic reasoning fully differentiable.
 
-Key paper: "Every Model Learned by Gradient Descent Is Approximately a
-Kernel Machine" (arXiv:2012.00152)
+Key papers: "Every Model Learned by Gradient Descent Is Approximately a
+Kernel Machine" (arXiv:2012.00152), and "Tensor Logic" (arXiv:2510.12269),
+which establishes the full logic↔tensor isomorphism this crate implements —
+predicates as tensors, conjunction as product, binding as contraction.
 
 ### Lotfi Zadeh & Fuzzy Logic
 

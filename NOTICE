@@ -7,10 +7,13 @@ This work draws on ideas from several fields and researchers:
 
 NEURO-SYMBOLIC AI & TENSOR LOGIC
   Pedro Domingos — "Every Model Learned by Gradient Descent Is Approximately
-  a Kernel Machine" (arXiv:2012.00152) and foundational work on unifying
-  logical and statistical AI. The Tensor Logic compiler's approach to
-  compiling symbolic rules into differentiable tensor equations is directly
-  informed by Domingos' research on bridging symbolic and subsymbolic systems.
+  a Kernel Machine" (arXiv:2012.00152); "Tensor Logic" (arXiv:2510.12269),
+  which establishes the logic↔tensor isomorphism (predicates as tensors,
+  binding as contraction) this crate implements; and foundational work on
+  unifying logical and statistical AI. The Tensor Logic compiler's approach
+  to compiling symbolic rules into differentiable tensor equations is
+  directly informed by Domingos' research on bridging symbolic and
+  subsymbolic systems.
 
 FUZZY LOGIC
   Lotfi Zadeh — Fuzzy sets and fuzzy logic (1965). The differentiable
