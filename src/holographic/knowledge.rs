@@ -372,14 +372,23 @@ impl KnowledgeSystemView {
 /// Broad category of knowledge represented in a space.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum KnowledgeSpaceKind {
+    /// Source code and code-derived artifacts.
     Code,
+    /// Business entities and capabilities.
     Business,
+    /// Documents and prose corpora.
     Document,
+    /// Workflows and processes.
     Workflow,
+    /// Metrics, traces, and telemetry.
     Telemetry,
+    /// Per-user state.
     UserState,
+    /// Conversational history.
     Conversation,
+    /// Third-party or federated content.
     External,
+    /// Caller-defined kind tag.
     Custom(String),
 }
 
@@ -401,13 +410,21 @@ pub struct KnowledgeItemRef {
 /// Category of item stored inside a knowledge space.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum KnowledgeItemType {
+    /// Code component (function, module, file).
     Component,
+    /// Knowledge-graph entity.
     Entity,
+    /// Relation between entities.
     Relation,
+    /// Document or section.
     Document,
+    /// Structured record row.
     Record,
+    /// Timestamped event.
     Event,
+    /// Condensed summary.
     Summary,
+    /// Caller-defined type tag.
     Custom(String),
 }
 

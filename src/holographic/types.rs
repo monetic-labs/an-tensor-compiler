@@ -76,6 +76,7 @@ pub struct ComponentId {
 }
 
 impl ComponentId {
+    /// Identifier from module path, component name, and kind.
     pub fn new(module: impl Into<String>, name: impl Into<String>, kind: ComponentKind) -> Self {
         Self {
             module: module.into(),
@@ -104,7 +105,9 @@ pub struct ComponentTensor {
 
     /// Source file location
     pub file: PathBuf,
+    /// First source line (1-based).
     pub line_start: usize,
+    /// Last source line (inclusive).
     pub line_end: usize,
 
     /// Semantic embedding (what it does) \[dim\]
@@ -376,8 +379,11 @@ pub struct FederationBinding {
 /// Tensor representation of commit history
 #[derive(Debug, Clone)]
 pub struct CommitTensor {
+    /// Commit hash.
     pub hash: String,
+    /// Commit message.
     pub message: String,
+    /// Commit timestamp.
     pub timestamp: DateTime<Utc>,
     /// Tensor encoding of the diff
     pub diff_tensor: Tensor,
@@ -446,9 +452,11 @@ pub struct OrganismTensor {
     /// History tensor
     pub history: Option<HistoryTensor>,
 
-    /// Metadata
+    /// Last update timestamp.
     pub updated_at: DateTime<Utc>,
+    /// Head commit hash at build time.
     pub commit: String,
+    /// Embedding dimension of the holograms.
     pub embedding_dim: usize,
 }
 
@@ -684,9 +692,13 @@ impl CoherenceResult {
 /// A boundary violation in generated code
 #[derive(Debug, Clone)]
 pub struct BoundaryViolation {
+    /// Context the access originates from.
     pub from_context: String,
+    /// Context being accessed.
     pub to_context: String,
+    /// Component performing the access.
     pub component: String,
+    /// Why the access violates the boundary.
     pub reason: String,
 }
 

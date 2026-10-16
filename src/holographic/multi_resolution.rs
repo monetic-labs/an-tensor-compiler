@@ -131,14 +131,30 @@ impl EscalationPolicy {
 #[serde(rename_all = "snake_case")]
 pub enum EscalationReason {
     /// L1 confidence was below the threshold.
-    LowConfidence { observed: f32, threshold: f32 },
+    LowConfidence {
+        /// Observed confidence.
+        observed: f32,
+        /// Threshold it fell below.
+        threshold: f32,
+    },
     /// L1 interference was above the threshold (semantic space crowded).
-    HighInterference { observed: f32, threshold: f32 },
+    HighInterference {
+        /// Observed interference.
+        observed: f32,
+        /// Threshold it exceeded.
+        threshold: f32,
+    },
     /// L1 bridge bleed was above the threshold (cross-space signal leaking).
-    HighBridgeBleed { observed: f32, threshold: f32 },
+    HighBridgeBleed {
+        /// Observed bleed.
+        observed: f32,
+        /// Threshold it exceeded.
+        threshold: f32,
+    },
 }
 
 impl EscalationReason {
+    /// Stable snake_case label for logs and metrics.
     pub fn label(&self) -> &'static str {
         match self {
             Self::LowConfidence { .. } => "low_confidence",
@@ -192,16 +208,22 @@ pub struct ResolutionLayer {
 /// A space hologram at a specific resolution.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResolutionSpace {
+    /// Space identifier.
     pub space_id: String,
+    /// Superposed space hologram.
     pub hologram: Vec<f32>,
+    /// Items folded into the hologram.
     pub item_count: usize,
 }
 
 /// An item hologram at a specific resolution.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResolutionItem {
+    /// Item identifier.
     pub id: String,
+    /// Owning space id.
     pub space_id: String,
+    /// Item hologram.
     pub hologram: Vec<f32>,
     /// What kind of content (code, document, etc.) — mirrors DataSourceItem.kind.
     pub kind: String,
@@ -210,11 +232,17 @@ pub struct ResolutionItem {
 /// Statistics for a multi-resolution compilation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MultiResolutionStats {
+    /// Items compiled across all spaces.
     pub total_items: usize,
+    /// Spaces compiled.
     pub total_spaces: usize,
+    /// L1 hologram dimension.
     pub l1_dimension: usize,
+    /// L2 dimension, if an L2 layer was built.
     pub l2_dimension: Option<usize>,
+    /// Embedder identity string.
     pub embedder: String,
+    /// Compilation timestamp.
     pub compiled_at: chrono::DateTime<chrono::Utc>,
 }
 

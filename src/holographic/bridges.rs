@@ -27,11 +27,17 @@ pub struct BridgeBinding {
 /// Generic categories of cross-space binding.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum BridgeBindingType {
+    /// Both ends mean the same thing.
     SemanticEquivalence,
+    /// One end implements the other.
     ImplementationMapping,
+    /// A policy governing a target.
     PolicyAppliesTo,
+    /// A workflow depending on another space.
     WorkflowDependsOn,
+    /// Derived or summarized content.
     DerivedFrom,
+    /// Caller-defined category tag.
     Custom(String),
 }
 

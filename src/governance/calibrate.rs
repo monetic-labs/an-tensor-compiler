@@ -86,10 +86,12 @@ impl EceHistory {
             .sum()
     }
 
+    /// Number of recorded samples.
     pub fn len(&self) -> usize {
         self.samples.len()
     }
 
+    /// Whether no samples have been recorded.
     pub fn is_empty(&self) -> bool {
         self.samples.is_empty()
     }

@@ -10,11 +10,14 @@ use crate::Result;
 /// A single candidate rule as an HRR vector plus stable id.
 #[derive(Debug, Clone)]
 pub struct CandidateRule {
+    /// Stable rule identifier.
     pub id: String,
+    /// Normalized rule hologram.
     pub hologram: Tensor,
 }
 
 impl CandidateRule {
+    /// Candidate with a normalized copy of `hologram`.
     pub fn new(id: impl Into<String>, hologram: Tensor) -> Result<Self> {
         Ok(Self {
             id: id.into(),
@@ -26,11 +29,14 @@ impl CandidateRule {
 /// Indexed candidate rules with optional superposed summary hologram.
 #[derive(Debug, Clone)]
 pub struct HypothesisBank {
+    /// Indexed candidates.
     pub candidates: Vec<CandidateRule>,
+    /// Superposed summary, once `with_superposition` runs.
     pub superposed: Option<Tensor>,
 }
 
 impl HypothesisBank {
+    /// Bank over `candidates` without a summary hologram.
     pub fn from_candidates(candidates: Vec<CandidateRule>) -> Result<Self> {
         Ok(Self {
             candidates,

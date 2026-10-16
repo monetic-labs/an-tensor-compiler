@@ -25,12 +25,19 @@ use std::collections::HashMap;
 /// Tool definition with interface and validation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolSpec {
+    /// Stable identifier for this tool.
     pub id: String,
+    /// Human-readable display name.
     pub name: String,
+    /// Functional category.
     pub category: ToolCategory,
+    /// Tool version string.
     pub version: String,
+    /// What the tool does.
     pub description: String,
+    /// Declared inputs and outputs.
     pub interface: ToolInterface,
+    /// Optional input validation rules.
     #[serde(default)]
     pub validation: Option<ValidationConfig>,
 }
@@ -38,43 +45,61 @@ pub struct ToolSpec {
 /// Tool categories.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ToolCategory {
+    /// Remote API invocation.
     APICall,
+    /// File read/write/list operations.
     FileSystem,
+    /// Database queries and mutations.
     Database,
+    /// Local computation.
     Compute,
+    /// Messaging and notifications.
     Communication,
+    /// Anything else.
     Custom,
 }
 
 /// Tool input/output interface.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolInterface {
+    /// Accepted input parameters.
     pub inputs: Vec<ParamSpec>,
+    /// Produced output parameters.
     pub outputs: Vec<ParamSpec>,
 }
 
 /// Parameter specification.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParamSpec {
+    /// Parameter name.
     pub name: String,
+    /// Expected value type.
     pub param_type: ParamType,
+    /// Whether the caller must supply it.
     pub required: bool,
+    /// What the parameter means.
     pub description: String,
 }
 
 /// Parameter types.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ParamType {
+    /// Text value.
     String,
+    /// Numeric value.
     Number,
+    /// True/false value.
     Boolean,
+    /// Ordered list value.
     Array,
+    /// Keyed object value.
     Object,
 }
 
 /// Validation configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ValidationConfig {
+    /// Rules keyed by input parameter name.
     #[serde(default)]
     pub input_validation: HashMap<String, Vec<ValidationRule>>,
 }
@@ -83,21 +108,34 @@ pub struct ValidationConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "rule_type", rename_all = "PascalCase")]
 pub enum ValidationRule {
+    /// Minimum string length.
     MinLength {
+        /// Required minimum length.
         value: usize,
+        /// Message on violation.
         error_message: String,
     },
+    /// Maximum string length.
     MaxLength {
+        /// Allowed maximum length.
         value: usize,
+        /// Message on violation.
         error_message: String,
     },
+    /// Regex pattern match.
     Pattern {
+        /// Pattern the value must match.
         value: String,
+        /// Message on violation.
         error_message: String,
     },
+    /// Numeric range check.
     Range {
+        /// Inclusive lower bound.
         min: f64,
+        /// Inclusive upper bound.
         max: f64,
+        /// Message on violation.
         error_message: String,
     },
 }
@@ -109,37 +147,53 @@ pub enum ValidationRule {
 /// A learned tool usage pattern.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolPattern {
+    /// Stable identifier for this pattern.
     pub id: String,
+    /// Owning context id.
     pub context_id: String,
+    /// Tool this pattern applies to.
     pub tool: String,
+    /// Use case the pattern captures.
     pub use_case: String,
+    /// Canonical example invocation.
     pub example_call: ExampleCall,
 
     // Success metrics
+    /// Observed successes.
     pub success_count: u64,
+    /// Observed failures.
     pub failure_count: u64,
+    /// Confidence score derived from outcomes.
     pub confidence: f64,
 
     // Strategy
+    /// How the tool should be executed.
     pub execution_strategy: ExecutionStrategy,
 
     // Alternatives
+    /// Fallback tools with their own track records.
     #[serde(default)]
     pub alternative_tools: Vec<AlternativeTool>,
 
     // Prototype features
+    /// Abstracted call template, if generalized.
     #[serde(default)]
     pub template: Option<ToolTemplate>,
+    /// Template variables.
     #[serde(default)]
     pub variables: Vec<TemplateVariable>,
+    /// Concrete usage exemplars.
     #[serde(default)]
     pub exemplars: Vec<Exemplar>,
 
     // Metadata
+    /// Contexts this pattern applies to.
     #[serde(default)]
     pub applies_to: Vec<String>,
+    /// When to prefer this pattern.
     #[serde(default)]
     pub when_to_use: Option<String>,
+    /// Situations where this pattern fails.
     #[serde(default)]
     pub when_not_to_use: Vec<String>,
 }
@@ -147,7 +201,9 @@ pub struct ToolPattern {
 /// Example tool call.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExampleCall {
+    /// Tool being invoked.
     pub tool: String,
+    /// Parameter values by name.
     pub params: HashMap<String, serde_json::Value>,
 }
 
@@ -160,16 +216,23 @@ pub enum ExecutionStrategy {
     Single,
     /// Try primary, fallback if needed
     SequentialFallback {
+        /// Observed primary success rate.
         primary_success_rate: f64,
+        /// Observed rate of fallback use.
         fallback_needed_rate: f64,
     },
     /// Race multiple tools
     ParallelFirstSuccess {
+        /// Whether the tools are interchangeable.
         tools_comparable: bool,
+        /// Whether latency dominates the choice.
         speed_critical: bool,
     },
     /// Still learning
-    Exploring { attempts: u32 },
+    Exploring {
+        /// Attempts observed so far.
+        attempts: u32,
+    },
 }
 
 impl Default for ExecutionStrategy {
@@ -181,14 +244,21 @@ impl Default for ExecutionStrategy {
 /// Alternative tool for fallback.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AlternativeTool {
+    /// Fallback tool name.
     pub tool: String,
+    /// Canonical example invocation.
     pub example_call: ExampleCall,
+    /// Observed successes.
     pub success_count: u64,
+    /// Observed failures.
     pub failure_count: u64,
+    /// Mean latency in milliseconds, if measured.
     #[serde(default)]
     pub avg_latency_ms: Option<u64>,
+    /// Times used as a fallback.
     #[serde(default)]
     pub used_as_fallback: u64,
+    /// Success rate when used as a fallback.
     #[serde(default)]
     pub fallback_success_rate: f64,
 }
@@ -196,30 +266,42 @@ pub struct AlternativeTool {
 /// Template for pattern abstraction.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolTemplate {
+    /// Tool being invoked.
     pub tool: String,
+    /// Templated parameter values by name.
     pub params: HashMap<String, serde_json::Value>,
 }
 
 /// Template variable definition.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TemplateVariable {
+    /// Variable name as it appears in the template.
     pub name: String,
+    /// What the variable captures.
     pub description: String,
+    /// Observed example values.
     pub example_values: Vec<String>,
+    /// Whether the template requires it.
     pub required: bool,
 }
 
 /// Concrete exemplar of pattern usage.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Exemplar {
+    /// Context the exemplar was observed in.
     pub context: String,
+    /// Concrete variable bindings.
     pub concrete_values: HashMap<String, String>,
+    /// Outcome of the call.
     pub result: ExemplarResult,
 }
 
+/// Outcome of an exemplar call.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExemplarResult {
+    /// Whether the call succeeded.
     pub success: bool,
+    /// Observed latency in milliseconds, if measured.
     #[serde(default)]
     pub latency_ms: Option<u64>,
 }

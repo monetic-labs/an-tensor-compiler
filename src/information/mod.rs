@@ -4,7 +4,7 @@
 //! mutual information, drift detection, and novelty scoring. Used by holographic
 //! memory for entropy-gated consolidation (only store surprising experiences).
 //!
-//! Ported from `an-tensor-compiler` v0.5.0 (`information::streaming`).
+//! Ported from `an-tensor-core` v0.5.0 (`information::streaming`).
 
 pub mod monte_carlo;
 pub mod streaming;

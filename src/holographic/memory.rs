@@ -70,6 +70,7 @@ pub struct Observation {
 }
 
 impl Observation {
+    /// Create an observation with empty metadata stamped now.
     pub fn new(category: impl Into<String>, description: impl Into<String>) -> Self {
         Self {
             category: category.into(),
@@ -79,6 +80,7 @@ impl Observation {
         }
     }
 
+    /// Attach a metadata entry (builder style).
     pub fn with_metadata(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.metadata.insert(key.into(), value.into());
         self
@@ -100,6 +102,7 @@ pub struct Action {
 }
 
 impl Action {
+    /// Create an action with empty parameters stamped now.
     pub fn new(action_type: impl Into<String>, description: impl Into<String>) -> Self {
         Self {
             action_type: action_type.into(),
@@ -109,6 +112,7 @@ impl Action {
         }
     }
 
+    /// Attach a parameter (builder style).
     pub fn with_param(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.parameters.insert(key.into(), value.into());
         self
@@ -130,6 +134,7 @@ pub struct ActionOutcome {
 }
 
 impl ActionOutcome {
+    /// Successful outcome with empty metrics stamped now.
     pub fn success(description: impl Into<String>) -> Self {
         Self {
             success: true,
@@ -139,6 +144,7 @@ impl ActionOutcome {
         }
     }
 
+    /// Failed outcome with empty metrics stamped now.
     pub fn failure(description: impl Into<String>) -> Self {
         Self {
             success: false,
@@ -148,6 +154,7 @@ impl ActionOutcome {
         }
     }
 
+    /// Attach a metric (builder style).
     pub fn with_metric(mut self, key: impl Into<String>, value: f64) -> Self {
         self.metrics.insert(key.into(), value);
         self
@@ -184,6 +191,7 @@ pub struct Episode {
 pub struct EpisodeId(pub String);
 
 impl EpisodeId {
+    /// Random v4 UUID episode id.
     pub fn new() -> Self {
         Self(uuid::Uuid::new_v4().to_string())
     }
@@ -243,6 +251,7 @@ pub struct PatternLibrary {
 }
 
 impl PatternLibrary {
+    /// Empty library matching failures above `match_threshold` similarity.
     pub fn new(device: Device, match_threshold: f32) -> Self {
         Self {
             failures: HashMap::new(),
@@ -413,6 +422,7 @@ pub struct WorkingMemory {
 }
 
 impl WorkingMemory {
+    /// Empty working memory holding at most `max_items` focus items.
     pub fn new(device: Device, dim: usize, max_items: usize) -> Result<Self> {
         let context = Tensor::zeros((dim,), DType::F32, &device)?;
         Ok(Self {
@@ -527,6 +537,7 @@ pub struct ExperienceHologram {
 }
 
 impl ExperienceHologram {
+    /// Empty experience hologram at the given dimension.
     pub fn new(device: Device, dim: usize) -> Result<Self> {
         let hologram = Tensor::zeros((dim,), DType::F32, &device)?;
         Ok(Self {
@@ -722,6 +733,7 @@ pub struct EntropyGatedMemory {
 }
 
 impl EntropyGatedMemory {
+    /// Gate storing only episodes above `min_novelty_bits` of novelty.
     pub fn new(window_size: usize, n_categories: usize, min_novelty_bits: f64) -> Self {
         Self {
             novelty_detector: StreamingNovelty::new(n_categories, window_size, 0.1),
@@ -792,6 +804,7 @@ impl std::fmt::Debug for RegimePartitionedMemory {
 }
 
 impl RegimePartitionedMemory {
+    /// One hologram per Lyapunov regime, starting in random-walk.
     pub fn new(device: Device, dim: usize, lyapunov_config: LyapunovConfig) -> Result<Self> {
         Ok(Self {
             stable_hologram: ExperienceHologram::new(device.clone(), dim)?,
@@ -931,6 +944,7 @@ pub struct MultiScaleMemory {
 }
 
 impl MultiScaleMemory {
+    /// Multi-scale store with `n_levels` detail levels plus approximation.
     pub fn new(device: Device, dim: usize, n_levels: usize) -> Result<Self> {
         let detail_holograms: Result<Vec<Tensor>> = (0..n_levels)
             .map(|_| Tensor::zeros((dim,), DType::F32, &device).map_err(Into::into))
@@ -1066,20 +1080,29 @@ impl MultiScaleMemory {
 pub enum MemoryResult {
     /// Matches a known failure pattern
     KnownFailure {
+        /// The matched failure pattern.
         failure: FailurePattern,
+        /// Best known recovery, if any.
         recovery: Option<RecoveryPattern>,
+        /// Match confidence.
         confidence: f32,
     },
     /// Novel situation requiring new action
     NewSituation {
+        /// Best-effort recall from experience.
         experience_recall: Tensor,
+        /// Confidence in that recall.
         experience_confidence: f32,
+        /// Current working-memory context.
         working_context: Tensor,
     },
     /// Similar to recent experience
     SimilarExperience {
+        /// Recalled experience tensor.
         recall: Tensor,
+        /// Match confidence.
         confidence: f32,
+        /// Ids of the recalled episodes.
         episode_ids: Vec<EpisodeId>,
     },
 }
@@ -1090,8 +1113,11 @@ pub enum MemoryResult {
 
 /// Embedding backend trait for memory
 pub trait EmbeddingBackend: Send + Sync {
+    /// Embed text into a fixed-dimension vector.
     fn embed(&self, text: &str) -> impl std::future::Future<Output = Result<Tensor>> + Send;
+    /// Device embeddings live on.
     fn device(&self) -> &Device;
+    /// Embedding dimension.
     fn dim(&self) -> usize;
 }
 
@@ -1120,6 +1146,7 @@ pub struct SynapseMemory<E: EmbeddingBackend> {
 }
 
 impl<E: EmbeddingBackend> SynapseMemory<E> {
+    /// Unified memory over `embedder` with the given configuration.
     pub async fn new(embedder: E, config: MemoryConfig) -> Result<Self> {
         let device = embedder.device().clone();
         let dim = config.embedding_dim;
@@ -1361,11 +1388,17 @@ impl<E: EmbeddingBackend> SynapseMemory<E> {
 /// Memory statistics
 #[derive(Debug, Clone)]
 pub struct MemoryStats {
+    /// Episodes accepted into storage.
     pub episodes_stored: usize,
+    /// Episodes rejected by the novelty gate.
     pub episodes_skipped: usize,
+    /// Current observation entropy estimate.
     pub current_entropy: f64,
+    /// Items currently in working memory.
     pub working_memory_items: usize,
+    /// Registered failure patterns.
     pub failure_patterns: usize,
+    /// Active Lyapunov regime, if partitioning is on.
     pub current_regime: Option<ChaosRegime>,
 }
 

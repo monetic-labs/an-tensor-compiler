@@ -18,7 +18,7 @@
 //! - Algorithms: `weighted_average()`, `fedavg()` merge functions
 //! - Traits: `SyncTransport` trait for transport abstraction
 //!
-//! **Transport implementations live elsewhere** (an-integration / DevOps):
+//! **Transport implementations live downstream** (in your infrastructure crates):
 //! - gRPC transport implementation
 //! - Redis pub/sub transport implementation
 //! - Scheduling, orchestration, monitoring
@@ -49,8 +49,8 @@
 //! | Types (FederationConfig, etc.) | ✅ Complete | an-tensor-compiler |
 //! | Merge algorithms | ✅ Complete | an-tensor-compiler |
 //! | SyncTransport trait | ✅ Complete | an-tensor-compiler |
-//! | Transport impls | 📋 Week 6 | an-integration / DevOps |
-//! | Orchestration | 📋 Week 6 | DevOps |
+//! | Transport impls | 📋 Week 6 | downstream crates |
+//! | Orchestration | 📋 Week 6 | downstream crates |
 
 pub mod algorithms;
 
@@ -288,7 +288,7 @@ impl FederatedPredicate {
 }
 
 // =============================================================================
-// TRANSPORT TRAIT (Implementation lives in an-integration / DevOps)
+// TRANSPORT TRAIT (implemented downstream, e.g. gRPC or Redis transports)
 // =============================================================================
 
 /// Trait for federation transport implementations
@@ -296,14 +296,14 @@ impl FederatedPredicate {
 /// **This trait is defined here but implemented elsewhere.**
 ///
 /// Implementations might include:
-/// - `GrpcTransport` in an-integration
-/// - `RedisTransport` in an-integration
+/// - `GrpcTransport` over gRPC
+/// - `RedisTransport` over Redis pub/sub
 /// - `LocalTransport` for testing
 ///
 /// # Example Implementation
 ///
 /// ```ignore
-/// // In an-integration/src/tensor_sync/grpc.rs
+/// // In your transport crate, e.g. src/tensor_sync/grpc.rs
 /// use an_tensor_compiler::federation::SyncTransport;
 ///
 /// pub struct GrpcTransport {

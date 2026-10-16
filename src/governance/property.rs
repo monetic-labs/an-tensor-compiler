@@ -29,21 +29,27 @@ pub struct L0Declarations {
 /// One trigger requirement: `head` implies the disjunction of `triggers`.
 #[derive(Debug, Clone)]
 pub struct TriggerDecl {
+    /// Head the requirement applies to.
     pub head: String,
+    /// Predicates/heads at least one activation path must pass through.
     pub triggers: Vec<String>,
 }
 
 /// Fail-grade feeds Verdicts; lint-grade feeds `refine`, never Verdicts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Grade {
+    /// Feeds Verdicts.
     Fail,
+    /// Feeds refine suggestions, never Verdicts.
     Lint,
 }
 
 /// One L0 property. See PPL v0.1 §4 for the catalog.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Property {
+    /// Which catalog entry this is.
     pub kind: PropertyKind,
+    /// Human-readable statement.
     pub description: String,
 }
 
@@ -53,35 +59,67 @@ pub struct Property {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum PropertyKind {
     /// L0.1: rule `rule_idx`'s body is satisfiable.
-    BodySat { rule_idx: usize },
+    BodySat {
+        /// Index into the spec's rule list.
+        rule_idx: usize,
+    },
     /// L0.2: `head` is satisfiable (not vacuously false).
-    HeadCoverage { head: String },
+    HeadCoverage {
+        /// Head predicate name.
+        head: String,
+    },
     /// L0.3: `head` is falsifiable (not a tautology).
-    HeadNontrivial { head: String },
+    HeadNontrivial {
+        /// Head predicate name.
+        head: String,
+    },
     /// L0.4 (declared): heads in `set` are pairwise exclusive.
-    Exclusion { set: Vec<String> },
+    Exclusion {
+        /// Mutually exclusive head names.
+        set: Vec<String>,
+    },
     /// L0.5 (declared): `head` implies the disjunction of `triggers`.
-    TriggerPresence { head: String, triggers: Vec<String> },
+    TriggerPresence {
+        /// Head predicate name.
+        head: String,
+        /// Required trigger names.
+        triggers: Vec<String>,
+    },
     /// L0.6: the existing validator reports no errors (imported, $0 solver).
     DefinedAritySafety,
     /// L0.7: rule `rule_idx`'s declared weight is finite.
-    WeightFinite { rule_idx: usize },
+    WeightFinite {
+        /// Index into the spec's rule list.
+        rule_idx: usize,
+    },
     /// L0.6 family: a declaration is malformed (unknown names, degenerate
     /// sets). Fails by construction — the derivation IS the finding.
-    InvalidDeclaration { message: String },
+    InvalidDeclaration {
+        /// What is malformed.
+        message: String,
+    },
     /// L0.8 (lint): rule `subsumed_idx`'s body implies rule
     /// `subsuming_idx`'s body (redundancy).
     Subsumption {
+        /// Head predicate name.
         head: String,
+        /// Index of the redundant rule.
         subsumed_idx: usize,
+        /// Index of the subsuming rule.
         subsuming_idx: usize,
     },
     /// L0.9 (lint): predicate `name` is defined but never referenced.
-    UnusedPredicate { name: String },
+    UnusedPredicate {
+        /// Unreferenced predicate name.
+        name: String,
+    },
     /// L0.9 (lint): two rules share a head and an identical body.
     DuplicateRule {
+        /// Head predicate name.
         head: String,
+        /// Index of the first occurrence.
         first_idx: usize,
+        /// Index of the duplicate.
         second_idx: usize,
     },
 }

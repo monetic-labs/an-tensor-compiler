@@ -22,7 +22,9 @@ pub enum LatticeNormalization {
 /// Layout of a 2D lattice. Rows and columns are zero-based indices.
 #[derive(Debug, Clone)]
 pub struct LatticeSpec {
+    /// Row count (zero-based indices).
     pub rows: usize,
+    /// Column count (zero-based indices).
     pub cols: usize,
     /// Number of discrete channel slots (caller-defined semantics); used for documentation
     /// and optional validation when using [`LatticeEncoder::encode_grid_superposition`].
@@ -30,6 +32,7 @@ pub struct LatticeSpec {
 }
 
 impl LatticeSpec {
+    /// Total cells (`rows * cols`).
     pub fn cell_count(&self) -> usize {
         self.rows * self.cols
     }
@@ -44,6 +47,7 @@ pub struct LatticeEncoder {
 }
 
 impl LatticeEncoder {
+    /// Encoder for `spec` at `dim` dimensions with the given normalization.
     pub fn new(dim: usize, device: &Device, spec: LatticeSpec, norm: LatticeNormalization) -> Self {
         Self {
             dim,
@@ -53,10 +57,12 @@ impl LatticeEncoder {
         }
     }
 
+    /// Hologram dimension.
     pub fn dimension(&self) -> usize {
         self.dim
     }
 
+    /// Lattice layout.
     pub fn spec(&self) -> &LatticeSpec {
         &self.spec
     }

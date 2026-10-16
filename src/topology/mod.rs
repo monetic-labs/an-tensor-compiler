@@ -4,7 +4,7 @@
 //! as stable, random-walk, or chaotic so memory and policy can adapt per regime.
 //! Used by holographic memory for regime-partitioned storage and recall.
 //!
-//! Ported from `an-tensor-compiler` v0.5.0 (`topology::lyapunov`).
+//! Ported from `an-tensor-core` v0.5.0 (`topology::lyapunov`).
 
 pub mod lyapunov;
 

@@ -31,7 +31,12 @@ pub enum CanonicalError {
     /// defense-in-depth. The real fail-closed point is [`FiniteF32`] /
     /// [`FiniteF64`] at serialization time.
     #[error("non-finite float at {path}: {value}")]
-    NonFiniteFloat { path: String, value: String },
+    NonFiniteFloat {
+        /// JSON path of the offending value.
+        path: String,
+        /// Debug rendering of the value.
+        value: String,
+    },
 
     /// `Serialize` → `Value` conversion failed (includes `Finite*`
     /// rejections, which surface here with their message).

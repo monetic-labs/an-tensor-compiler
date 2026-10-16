@@ -34,9 +34,13 @@ use std::collections::HashMap;
 /// Top-level workflow specification.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowSpec {
+    /// Stable identifier for this workflow.
     pub id: String,
+    /// Human-readable display name.
     pub name: String,
+    /// Execution pattern.
     pub pattern: WorkflowPattern,
+    /// Pattern-specific definition.
     pub definition: WorkflowDefinition,
 }
 
@@ -44,8 +48,11 @@ pub struct WorkflowSpec {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "PascalCase")]
 pub enum WorkflowPattern {
+    /// Steps with compensation on failure.
     Saga,
+    /// Dependency-ordered directed acyclic graph.
     DAG,
+    /// Strictly sequential steps.
     Linear,
 }
 
@@ -53,14 +60,21 @@ pub enum WorkflowPattern {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "PascalCase")]
 pub enum WorkflowDefinition {
+    /// Saga steps with a compensation strategy.
     Saga {
+        /// Ordered steps.
         steps: Vec<WorkflowStep>,
+        /// How to compensate on failure.
         compensation_strategy: CompensationStrategy,
     },
+    /// DAG nodes executed in dependency order.
     DAG {
+        /// Graph nodes.
         nodes: Vec<WorkflowStep>,
     },
+    /// Strictly sequential steps.
     Linear {
+        /// Ordered steps.
         steps: Vec<WorkflowStep>,
     },
 }
@@ -68,7 +82,9 @@ pub enum WorkflowDefinition {
 /// A single step/node in a workflow.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowStep {
+    /// Stable identifier for this step.
     pub id: String,
+    /// Human-readable display name.
     pub name: String,
     /// Tensor operation to execute (replaces legacy `agents` field)
     #[serde(default)]
@@ -76,12 +92,16 @@ pub struct WorkflowStep {
     /// Legacy agent refs (deprecated, converted to ops)
     #[serde(default)]
     pub agents: Vec<String>,
+    /// Whether the step may run alongside siblings.
     #[serde(default)]
     pub parallelizable: bool,
+    /// Ids of steps that must complete first.
     #[serde(default)]
     pub dependencies: Vec<String>,
+    /// Per-step timeout in seconds, if any.
     #[serde(default)]
     pub timeout_seconds: Option<u64>,
+    /// Compensation to run if a later step fails.
     #[serde(default)]
     pub compensation: Option<CompensationConfig>,
 }
@@ -95,6 +115,7 @@ pub struct CompensationConfig {
     /// Legacy agent refs (deprecated)
     #[serde(default)]
     pub agents: Vec<String>,
+    /// Times to retry compensation before giving up.
     #[serde(default)]
     pub max_retries: u32,
 }
@@ -120,9 +141,13 @@ pub enum CompensationStrategy {
 /// Chain of workflows for meta-orchestration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowChain {
+    /// Stable identifier for this chain.
     pub id: String,
+    /// Human-readable display name.
     pub name: String,
+    /// How the chained workflows execute.
     pub chain_pattern: ChainPattern,
+    /// Workflows in chain order.
     pub workflows: Vec<ChainedWorkflow>,
 }
 
@@ -130,17 +155,24 @@ pub struct WorkflowChain {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "PascalCase")]
 pub enum ChainPattern {
+    /// Run workflows one after another.
     Sequential,
+    /// Run each workflow only if its condition holds.
     Conditional,
+    /// Run all workflows concurrently.
     Parallel,
+    /// Repeat the chain until exit.
     Loop,
 }
 
 /// A workflow in a chain with execution conditions.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChainedWorkflow {
+    /// Referenced workflow id.
     pub workflow_id: String,
+    /// Zero-based position in the chain.
     pub position: u32,
+    /// Optional gate condition.
     #[serde(default)]
     pub execute_if: Option<ExecuteCondition>,
 }
@@ -150,11 +182,37 @@ pub struct ChainedWorkflow {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "PascalCase")]
 pub enum ExecuteCondition {
-    Equals { field: String, value: String },
-    GreaterThan { field: String, value: f64 },
-    LessThan { field: String, value: f64 },
-    And { conditions: Vec<ExecuteCondition> },
-    Or { conditions: Vec<ExecuteCondition> },
+    /// String equality check.
+    Equals {
+        /// Field to read.
+        field: String,
+        /// Expected value.
+        value: String,
+    },
+    /// Numeric greater-than check.
+    GreaterThan {
+        /// Field to read.
+        field: String,
+        /// Threshold value.
+        value: f64,
+    },
+    /// Numeric less-than check.
+    LessThan {
+        /// Field to read.
+        field: String,
+        /// Threshold value.
+        value: f64,
+    },
+    /// All sub-conditions hold.
+    And {
+        /// Sub-conditions.
+        conditions: Vec<ExecuteCondition>,
+    },
+    /// Any sub-condition holds.
+    Or {
+        /// Sub-conditions.
+        conditions: Vec<ExecuteCondition>,
+    },
 }
 
 // =============================================================================

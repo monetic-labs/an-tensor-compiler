@@ -26,15 +26,23 @@ use std::collections::HashMap;
 /// Core context definition (mission, goals, principles).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CoreContext {
+    /// Stable identifier for this context.
     pub id: String,
+    /// Human-readable display name.
     pub name: String,
+    /// Organizational scope of the context.
     pub context_type: ContextType,
+    /// Lifecycle status.
     pub status: ContextStatus,
+    /// The mission statement this context serves.
     pub mission: Mission,
+    /// Goals tracked under this context.
     #[serde(default)]
     pub goals: Vec<Goal>,
+    /// Guiding principles with soft-constraint weights.
     #[serde(default)]
     pub principles: Vec<Principle>,
+    /// Metrics measured against this context.
     #[serde(default)]
     pub measurables: Vec<Measurable>,
 }
@@ -42,24 +50,33 @@ pub struct CoreContext {
 /// Context type.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ContextType {
+    /// Whole-organization scope.
     Organization,
+    /// Single-project scope.
     Project,
+    /// Team scope.
     Team,
+    /// Individual scope.
     Individual,
 }
 
 /// Context status.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ContextStatus {
+    /// Currently in use.
     Active,
+    /// Temporarily disabled.
     Inactive,
+    /// Retired; kept for history.
     Archived,
 }
 
 /// Mission statement.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Mission {
+    /// The mission statement text.
     pub statement: String,
+    /// Who approved the statement, if anyone.
     #[serde(default)]
     pub approved_by: Option<String>,
 }
@@ -67,29 +84,44 @@ pub struct Mission {
 /// Goal definition.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Goal {
+    /// Stable identifier for this goal.
     pub id: String,
+    /// Human-readable display name.
     pub name: String,
+    /// Numeric target value.
     pub target: f64,
+    /// Unit of the target value.
     pub unit: String,
+    /// Priority rank; higher runs first.
     pub priority: u32,
+    /// Lifecycle status.
     pub status: GoalStatus,
+    /// Optional due date.
     #[serde(default)]
     pub deadline: Option<DateTime<Utc>>,
 }
 
+/// Lifecycle status of a goal.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum GoalStatus {
+    /// In progress.
     Active,
+    /// Target reached.
     Achieved,
+    /// Target missed or abandoned.
     Failed,
+    /// Temporarily suspended.
     Paused,
 }
 
 /// Principle with weight.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Principle {
+    /// Stable identifier for this principle.
     pub id: String,
+    /// Human-readable display name.
     pub name: String,
+    /// What the principle requires.
     pub description: String,
     /// Weight for soft constraint tensor (0-10)
     pub weight: f64,
@@ -98,17 +130,26 @@ pub struct Principle {
 /// Measurable metric.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Measurable {
+    /// Stable identifier for this metric.
     pub id: String,
+    /// Human-readable display name.
     pub name: String,
+    /// Formula used to compute the value.
     pub formula: String,
+    /// Alert threshold value.
     pub threshold: f64,
+    /// When the threshold triggers an alert.
     pub alert_on: AlertCondition,
 }
 
+/// When a measurable threshold triggers an alert.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum AlertCondition {
+    /// Fire when the value exceeds the threshold.
     AboveThreshold,
+    /// Fire when the value drops below the threshold.
     BelowThreshold,
+    /// Fire when the value leaves the accepted range.
     OutsideRange,
 }
 
@@ -119,25 +160,36 @@ pub enum AlertCondition {
 /// Dynamic context node that decays over time.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DynamicNode {
+    /// Stable identifier for this node.
     pub id: String,
+    /// Owning context id.
     pub context_id: String,
+    /// Node kind discriminator.
     pub node_type: String,
+    /// Who or what created the node.
     pub created_by: String,
 
     // Decay metadata
+    /// Times the node has been accessed.
     pub access_count: u64,
+    /// Last access timestamp.
     pub last_accessed: DateTime<Utc>,
+    /// Current decay weight.
     pub decay_weight: f64,
+    /// Algorithm governing decay over time.
     pub decay_algorithm: DecayAlgorithm,
 
     // Content
+    /// Arbitrary node payload.
     pub data: HashMap<String, serde_json::Value>,
 
     // Graph structure
+    /// Ids of related nodes.
     #[serde(default)]
     pub related_to: Vec<String>,
 
     // References (deprecated: use CRDT keys)
+    /// Legacy external references.
     #[serde(default)]
     pub references: Vec<Reference>,
 }
@@ -145,10 +197,13 @@ pub struct DynamicNode {
 /// Reference to external data (deprecated).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Reference {
+    /// Reference kind discriminator.
     #[serde(rename = "type")]
     pub ref_type: String,
+    /// Source table name, if any.
     #[serde(default)]
     pub table: Option<String>,
+    /// Source row id, if any.
     #[serde(default)]
     pub id: Option<String>,
 }
@@ -157,20 +212,32 @@ pub struct Reference {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "PascalCase")]
 pub enum DecayAlgorithm {
+    /// Fibonacci-indexed decay over days.
     Fibonacci {
+        /// Weight at creation.
         initial_weight: f64,
+        /// Per-index decay factor.
         decay_rate: f64,
     },
+    /// Logarithmic decay over age.
     Logarithmic {
+        /// Weight at creation.
         initial_weight: f64,
+        /// Log-scale decay constant.
         decay_constant: f64,
     },
+    /// Quadratic falloff with age.
     Quadratic {
+        /// Weight at creation.
         initial_weight: f64,
+        /// Quadratic acceleration term.
         acceleration: f64,
     },
+    /// Linear decay offset by access boosts.
     AccessBased {
+        /// Per-second decay rate.
         base_decay: f64,
+        /// Weight restored per access.
         access_boost: f64,
     },
 }
@@ -191,37 +258,56 @@ impl Default for DecayAlgorithm {
 /// A principle learned from successful patterns.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LearnedPrinciple {
+    /// Stable identifier for this principle.
     pub id: String,
+    /// Owning context id.
     pub context_id: String,
+    /// Human-readable display name.
     pub name: String,
+    /// What the principle requires.
     pub description: String,
     /// Learned weight (0-10)
     pub weight: f64,
 
     // Provenance
+    /// Ids of the patterns this was learned from.
     pub learned_from: Vec<String>,
+    /// Kind of source pattern.
     pub source_pattern_type: PatternType,
+    /// Observed success rate.
     pub success_rate: f64,
+    /// Times applied.
     pub total_uses: u64,
 
     // Governance (tensorized to confidence threshold)
+    /// Human approval state.
     pub approval_status: ApprovalStatus,
+    /// Who approved, if anyone.
     #[serde(default)]
     pub approved_by: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+/// Kind of pattern a learned principle was mined from.
 pub enum PatternType {
+    /// Tool-use pattern.
     Tool,
+    /// Workflow pattern.
     Workflow,
+    /// Context pattern.
     Context,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+/// Human approval state of a learned principle.
 pub enum ApprovalStatus {
+    /// Awaiting review.
     Pending,
+    /// Accepted for use.
     Approved,
+    /// Declined.
     Rejected,
+    /// Approval withdrawn.
     Revoked,
 }
 

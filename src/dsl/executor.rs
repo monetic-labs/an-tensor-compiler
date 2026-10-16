@@ -339,9 +339,15 @@ pub struct PatternMatch {
 #[derive(Debug, Clone, Copy)]
 pub enum ToolOutcome {
     /// Tool executed successfully
-    Success { latency_ms: u64 },
+    Success {
+        /// Observed latency in milliseconds.
+        latency_ms: u64,
+    },
     /// Tool failed
-    Failure { recoverable: bool },
+    Failure {
+        /// Whether retrying could succeed.
+        recoverable: bool,
+    },
     /// Tool timed out
     Timeout,
 }

@@ -12,24 +12,31 @@ use std::collections::HashMap;
 /// DSL-specific error type
 #[derive(Debug, thiserror::Error)]
 pub enum DslError {
+    /// Spec text failed to parse.
     #[error("Parse error: {0}")]
     Parse(String),
 
+    /// Parsed spec failed validation.
     #[error("Validation error: {0}")]
     Validation(String),
 
+    /// Valid spec failed tensor-graph compilation.
     #[error("Compilation error: {0}")]
     Compilation(String),
 
+    /// Compiled graph failed at runtime.
     #[error("Execution error: {0}")]
     Execution(String),
 
+    /// YAML deserialization failure.
     #[error("YAML error: {0}")]
     Yaml(#[from] serde_yaml::Error),
 
+    /// JSON deserialization failure.
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
 
+    /// Underlying tensor operation failure.
     #[error("Tensor error: {0}")]
     Tensor(#[from] candle_core::Error),
 }
@@ -146,12 +153,20 @@ pub struct TensorNode {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum TensorOp {
     /// Load a tensor from namespace path
-    TensorLoad { path: String },
+    TensorLoad {
+        /// Namespace path to load.
+        path: String,
+    },
     /// Apply a compiled rule
-    RuleForward { rule_name: String },
+    RuleForward {
+        /// Name of the rule to run.
+        rule_name: String,
+    },
     /// Custom tensor operation
     Custom {
+        /// Operation name.
         name: String,
+        /// String parameters by key.
         params: HashMap<String, String>,
     },
     /// No-op (for structural nodes)

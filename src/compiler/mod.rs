@@ -1590,8 +1590,7 @@ mod tests {
         compiled.save(&temp_path).unwrap();
 
         // Load into new instance
-        let mut loaded =
-            CompiledRule::compile_on_device(spec, &candle_core::Device::Cpu).unwrap();
+        let mut loaded = CompiledRule::compile_on_device(spec, &candle_core::Device::Cpu).unwrap();
         loaded.load(&temp_path).unwrap();
 
         // Get output after load

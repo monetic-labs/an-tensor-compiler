@@ -50,13 +50,8 @@ pub mod compiler;
 pub mod compliance;
 pub mod counterops;
 pub mod crdt;
-// SYNC DEBT (v0.2.0 port): ported modules below allow missing docs until the
-// upstream `an-tensor-core` adopts `#![warn(missing_docs)]` and documents them
-// at the source. New hand-written public modules must keep full rustdoc.
-#[allow(missing_docs)]
 pub mod dsl;
 pub mod federation;
-#[allow(missing_docs)]
 pub mod governance;
 pub mod holographic;
 pub mod information;

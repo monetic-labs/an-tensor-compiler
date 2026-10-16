@@ -33,7 +33,7 @@
 //! }
 //! ```
 //!
-//! Ported from `an-tensor-compiler` v0.5.0 (`governance` module, solver-free subset).
+//! Ported from `an-tensor-core` v0.5.0 (`governance` module, solver-free subset).
 //! Excluded from this port (they require the private content-addressed artifact
 //! backend): `artifact`, `ledger`, `stamp`, `promotion`, `revoke`, `eval`, `queue`,
 //! `sample`, `shadow`, `pipeline`, `triage`, `triage_queue`.

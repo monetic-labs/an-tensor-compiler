@@ -31,6 +31,7 @@ pub struct TensorStore {
 }
 
 impl TensorStore {
+    /// Store rooted at `base_path` loading tensors onto `device`.
     pub fn new(base_path: impl AsRef<Path>, device: Device) -> Self {
         Self {
             base_path: base_path.as_ref().to_path_buf(),
@@ -534,6 +535,7 @@ pub struct CacheEntry {
 }
 
 impl ComponentCache {
+    /// Cache in `cache_dir`, loading any existing index.
     pub fn new(cache_dir: impl AsRef<Path>, device: Device) -> Self {
         let cache_dir = cache_dir.as_ref().to_path_buf();
         let index = Self::load_index(&cache_dir).unwrap_or_default();
@@ -715,8 +717,11 @@ impl ComponentCache {
 /// Cache statistics
 #[derive(Debug, Clone)]
 pub struct CacheStats {
+    /// Total cache entries.
     pub total_entries: usize,
+    /// Distinct components cached.
     pub total_components: usize,
+    /// Cache directory surveyed.
     pub cache_dir: PathBuf,
 }
 

@@ -13,12 +13,19 @@ use super::sort::SortPolicy;
 
 /// Everything the F-1 pipeline needs, preassembled for the demo.
 pub struct DemoInputs {
+    /// Demo rule spec.
     pub spec: RuleSpec,
+    /// L0 declarations (exclusions, triggers).
     pub decls: L0Declarations,
+    /// Margin propagation config.
     pub margin_config: MarginConfig,
+    /// Sort-check policy.
     pub sort_policy: SortPolicy,
+    /// Predicate under demo.
     pub predicate_id: String,
+    /// Model version string.
     pub model_version: String,
+    /// Corpus reference string.
     pub corpus_ref: String,
 }
 

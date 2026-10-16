@@ -11,23 +11,32 @@ use crate::TensorCoreError;
 /// Flat tensor payload suitable for JSON and checksums.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TensorPayload {
+    /// Row-major tensor shape.
     pub shape: Vec<usize>,
+    /// Flattened row-major values.
     pub data: Vec<f32>,
 }
 
 /// Versioned bundle of tensors + metadata for checkpoints (not HETS entities).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HrrArtifact {
+    /// Format tag; must equal `FORMAT_VERSION`.
     pub format_version: String,
+    /// Hologram dimension of the payloads.
     pub dim: usize,
+    /// Whether consumers should normalize on load.
     pub normalize_outputs: bool,
+    /// Named tensor payloads.
     pub tensors: BTreeMap<String, TensorPayload>,
+    /// Hex checksum over canonical JSON, if sealed.
     pub checksum_sha256: Option<String>,
 }
 
 impl HrrArtifact {
+    /// Current format tag written by `new`.
     pub const FORMAT_VERSION: &'static str = "hrr_artifact/1";
 
+    /// Empty artifact at the current format version.
     pub fn new(dim: usize, normalize_outputs: bool) -> Self {
         Self {
             format_version: Self::FORMAT_VERSION.to_string(),
@@ -38,6 +47,7 @@ impl HrrArtifact {
         }
     }
 
+    /// Insert or replace a named payload.
     pub fn insert_tensor(&mut self, name: impl Into<String>, payload: TensorPayload) {
         self.tensors.insert(name.into(), payload);
     }
@@ -57,11 +67,13 @@ impl HrrArtifact {
         format!("{:x}", hasher.finalize())
     }
 
+    /// Seal with a checksum over current contents (builder style).
     pub fn with_checksum(mut self) -> Self {
         self.checksum_sha256 = Some(self.compute_checksum());
         self
     }
 
+    /// Verify the sealed checksum against current contents.
     pub fn verify_checksum(&self) -> Result<(), TensorCoreError> {
         let Some(ref expected) = self.checksum_sha256 else {
             return Err(TensorCoreError::Tensor(

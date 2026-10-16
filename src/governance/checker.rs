@@ -23,14 +23,23 @@ use super::property::{Property, PropertyKind};
 /// cliff and forces the solver slice — F0 never silently approximates.
 pub const F0_MAX_ATOMS: usize = 24;
 
+/// F0 checker failure: input too large or skeleton/spec mismatch.
 #[derive(Debug, thiserror::Error)]
 pub enum CheckerError {
+    /// Too many atoms for brute force.
     #[error("atom cap exceeded: {atoms} atoms > cap {cap}; F0 brute force refuses to approximate")]
-    AtomCapExceeded { atoms: usize, cap: usize },
+    AtomCapExceeded {
+        /// Atoms in the skeleton.
+        atoms: usize,
+        /// Enforced cap.
+        cap: usize,
+    },
 
+    /// Head missing from the skeleton.
     #[error("unknown head '{0}' (skeleton and spec must derive from the same RuleSpec)")]
     UnknownHead(String),
 
+    /// Rule index missing from the skeleton.
     #[error("unknown rule index {0} (skeleton and spec must derive from the same RuleSpec)")]
     UnknownRule(usize),
 }
@@ -38,7 +47,9 @@ pub enum CheckerError {
 /// One conjunct of a rule body: possibly-negated atom reference.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Lit {
+    /// Atom index into the skeleton.
     pub atom: usize,
+    /// Whether the literal is negated.
     pub negated: bool,
 }
 

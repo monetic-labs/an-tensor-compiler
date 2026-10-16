@@ -630,11 +630,11 @@ mod tests {
     }
 
     // =========================================================================
-    // NEW: Full org-monetic style rules
+    // NEW: Full acme-style panel rules
     // =========================================================================
 
     #[test]
-    fn test_parse_monetic_panel_rules() {
+    fn test_parse_acme_panel_rules() {
         let source = r#"
             % Universal panels
             panel_access(chat).
@@ -652,7 +652,7 @@ mod tests {
             panel_access(customer_management) :- is_admin.
         "#;
 
-        let spec = parse_rules("monetic_panels", source).unwrap();
+        let spec = parse_rules("acme_panels", source).unwrap();
         assert_eq!(spec.rules.len(), 9);
 
         // All should have head "panel_access"

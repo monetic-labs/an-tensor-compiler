@@ -40,42 +40,29 @@
 //! let result = project(&hologram, &query)?;
 //! ```
 //!
-//! Ported from `an-tensor-compiler` v0.5.0 (`holographic` module, portable subset).
+//! Ported from `an-tensor-core` v0.5.0 (`holographic` module, portable subset).
 //! Excluded from this port (they require the private inference/IO stack):
 //! `encoding`, `projection`, `manager`, `conversation`, `daemon_encoder`,
 //! `validation`, `runtime_advance`, `cache`.
 
-// SYNC DEBT (v0.2.0 port): `#[allow(missing_docs)]` marks files ported from
-// `an-tensor-core` (which does not enforce the lint) pending upstream docs.
-// Do not add new undocumented items under these modules; document at source.
-#[allow(missing_docs)]
 pub mod bridges;
 pub mod composite;
 pub mod diagnostics;
 pub mod ecosystem;
 pub mod entities;
 pub mod geometric;
-#[allow(missing_docs)]
 pub mod hypothesis;
-#[allow(missing_docs)]
 pub mod knowledge;
 pub mod manifest;
-#[allow(missing_docs)]
 pub mod memory;
-#[allow(missing_docs)]
 pub mod multi_resolution;
 pub mod ops;
-#[allow(missing_docs)]
 pub mod persistence;
-#[allow(missing_docs)]
 pub mod policy;
 pub mod query_protocol;
 pub mod recovery;
-#[allow(missing_docs)]
 pub mod spatial;
-#[allow(missing_docs)]
 pub mod storage;
-#[allow(missing_docs)]
 pub mod types;
 
 // --- Re-exports ---

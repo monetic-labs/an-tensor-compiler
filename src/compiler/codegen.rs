@@ -284,7 +284,7 @@ impl CompiledPredicate {
                 // `[batch]`). Flatten so Threshold and LearnedProjection
                 // conjunctions share shape `[batch]` — otherwise
                 // `fuzzy_and` fails with `shape mismatch in mul, lhs:
-                // [1, 1], rhs: [1]` (an-account digest 500 residual,
+                // [1, 1], rhs: [1]` (mixed-rank conjunction residual,
                 // 2026-07-11).
                 soft_threshold_scalar(input, *threshold, sharp)?
                     .flatten_all()
@@ -3334,7 +3334,7 @@ mod tests {
 
     #[test]
     fn test_attention_no_nan_with_trading_config() {
-        // Regression test for NaN bug reported by org-lttr
+        // Regression test for reported NaN bug
         // Config: 18 features, 128 hidden, 4 attention heads
         use super::super::Activation;
 
@@ -3460,7 +3460,7 @@ mod tests {
     #[test]
     fn test_attention_stable_after_backward() {
         // Regression test: NaN after first backward + step
-        // This was the org-lttr training bug
+        // This was the downstream training bug
         use super::super::Activation;
         use candle_nn::optim::{Optimizer, SGD};
 
@@ -3601,7 +3601,7 @@ mod tests {
     #[test]
     fn test_attention_auto_clamp_no_manual_intervention() {
         // Regression test: Training with attention should work WITHOUT manual clamp_attention_weights()
-        // This was the org-lttr bug - NaN after first backward + step when not calling clamp.
+        // This was the downstream bug - NaN after first backward + step when not calling clamp.
         // The fix: auto-clamp weights during forward pass in apply_multi_head_attention().
         use super::super::Activation;
         use candle_nn::optim::{Optimizer, SGD};

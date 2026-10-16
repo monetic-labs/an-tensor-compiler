@@ -37,7 +37,9 @@ pub enum OutputSort {
 /// warn-then-deny, default warn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SortSeverity {
+    /// Report but allow.
     Warn,
+    /// Reject the spec.
     Deny,
 }
 
@@ -45,17 +47,31 @@ pub enum SortSeverity {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SortLocation {
     /// A rule-body literal must be `Truth`-sorted.
-    Literal { rule_idx: usize, predicate: String },
+    Literal {
+        /// Index into the spec's rule list.
+        rule_idx: usize,
+        /// Offending predicate name.
+        predicate: String,
+    },
     /// A composite child must resolve (rule-body validation cannot see it).
-    CompositeChild { composite: String, child: String },
+    CompositeChild {
+        /// Composite predicate name.
+        composite: String,
+        /// Unresolved child name.
+        child: String,
+    },
 }
 
 /// One sort finding: a non-`Truth` sort where `Truth` is required.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SortFinding {
+    /// Where the bad sort was found.
     pub location: SortLocation,
+    /// The offending sort.
     pub sort: OutputSort,
+    /// Warn or deny.
     pub severity: SortSeverity,
+    /// Human-readable explanation.
     pub message: String,
 }
 
@@ -63,6 +79,7 @@ pub struct SortFinding {
 /// findings report [`SortSeverity::Deny`]; otherwise [`SortSeverity::Warn`].
 #[derive(Debug, Clone, Copy)]
 pub struct SortPolicy {
+    /// Deny (vs warn) non-`Truth` literal positions.
     pub deny_non_truth_literals: bool,
 }
 

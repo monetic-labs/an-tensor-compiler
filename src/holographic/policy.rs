@@ -232,9 +232,13 @@ impl ProjectionPolicy {
 /// High-level projection mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub enum ProjectionMode {
+    /// Project within one space only.
     SingleSpace,
+    /// Project across spaces without bridges.
     MultiSpace,
+    /// Traverse explicit bridges.
     Bridged,
+    /// Choose automatically from the query.
     #[default]
     Auto,
 }
